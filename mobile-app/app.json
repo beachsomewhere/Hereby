@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "Nearby",
+    "slug": "nearby-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Nearby shows conversations happening around your current location. Your exact location is never shown to other users.",
+        "UIBackgroundModes": ["location"]
+      }
+    },
+    "android": {
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+    },
+    "extra": {
+      "devModeAvailableByDefault": true
+    }
+  }
+}

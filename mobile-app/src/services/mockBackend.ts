@@ -1,0 +1,513 @@
+// In-memory stand-in for the real backend described in the Phase 1
+// architecture doc: Supabase Postgres/PostGIS + Realtime + Edge Functions.
+//
+// Every exported function here has the signature a real implementation
+// would have (async, same inputs/outputs) so that swapping this module for
+// src/services/supabaseBackend.ts later is mechanical - screens never talk
+// to storage directly, only to this module's API.
+//
+// Two things this mock is careful to preserve from the real design, because
+// they're the whole point of the privacy model:
+//  1. Raw coordinates are never stored - only eligibility state is.
+//  2. Conversation locations are generalized (snapped) before being stored.
+
+import {
+  Conversation,
+  ConversationCategory,
+  ConversationSummary,
+  CreateConversationInput,
+  CreateConversationResult,
+  EligibilityResult,
+  GeoPoint,
+  Message,
+  ParticipantState,
+  Confirmation,
+  ConfirmationType,
+  Report,
+  ReportTargetType,
+  User,
+} from "./types";
+import { distanceMeters, snapToGrid, jitter } from "./geo";
+import { computeActivityScore, computeRenderSize, minutesBetween, nextStatus } from "./activityScore";
+import { SCENARIOS, ScenarioName } from "../dev/scenarios";
+
+// ---------------------------------------------------------------------------
+// In-memory "clock" - lets dev mode fast-forward time without waiting.
+// ---------------------------------------------------------------------------
+let clockOffsetMs = 0;
+export function now(): Date {
+  return new Date(Date.now() + clockOffsetMs);
+}
+export function nowIso(): string {
+  return now().toISOString();
+}
+export function advanceClockMinutes(minutes: number) {
+  clockOffsetMs += minutes * 60 * 1000;
+  recomputeAll();
+  notifyMap();
+}
+
+// ---------------------------------------------------------------------------
+// Radii + expiration defaults, per Phase 1 sections 9 and 10.
+// ---------------------------------------------------------------------------
+const RADII: Record<ConversationCategory, { discovery: number; participation: number; graceMin: number; ttlHours: number }> = {
+  micro_location: { discovery: 400, participation: 60, graceMin: 12, ttlHours: 5 },
+  venue: { discovery: 1200, participation: 250, graceMin: 25, ttlHours: 6 },
+  area: { discovery: 3000, participation: 800, graceMin: 35, ttlHours: 10 },
+  corridor: { discovery: 2500, participation: 350, graceMin: 15, ttlHours: 2 },
+};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+interface ParticipantRecord {
+  userId: string;
+  state: ParticipantState;
+  joinedAt: string;
+  graceStartedAt?: string;
+}
+
+const users = new Map<string, User>();
+const conversations = new Map<string, Conversation>();
+const messages = new Map<string, Message[]>(); // conversationId -> messages
+const participants = new Map<string, Map<string, ParticipantRecord>>(); // conversationId -> userId -> record
+const confirmations = new Map<string, Confirmation[]>(); // messageId -> confirmations
+const reports: Report[] = [];
+const blocks = new Map<string, Set<string>>(); // blockerId -> blockedIds
+
+let idCounter = 1;
+function nextId(prefix: string): string {
+  return `${prefix}_${idCounter++}`;
+}
+
+type Listener = () => void;
+const mapListeners = new Set<Listener>();
+const conversationListeners = new Map<string, Set<Listener>>();
+
+function notifyMap() {
+  mapListeners.forEach((l) => l());
+}
+function notifyConversation(conversationId: string) {
+  conversationListeners.get(conversationId)?.forEach((l) => l());
+}
+
+export function subscribeToMap(listener: Listener): () => void {
+  mapListeners.add(listener);
+  return () => mapListeners.delete(listener);
+}
+export function subscribeToConversation(conversationId: string, listener: Listener): () => void {
+  if (!conversationListeners.has(conversationId)) conversationListeners.set(conversationId, new Set());
+  conversationListeners.get(conversationId)!.add(listener);
+  return () => conversationListeners.get(conversationId)?.delete(listener);
+}
+
+// ---------------------------------------------------------------------------
+// Users
+// ---------------------------------------------------------------------------
+const ADJECTIVES = ["Quiet", "Amber", "Coastal", "Rapid", "Gentle", "Bold", "Steady", "Curious"];
+const NOUNS = ["Falcon", "Harbor", "Maple", "Ridge", "Comet", "Otter", "Lantern", "Cedar"];
+
+export function generatePseudonym(): string {
+  const a = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const n = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  const num = Math.floor(Math.random() * 900) + 100;
+  return `${a}${n}${num}`;
+}
+
+export async function createUser(username?: string): Promise<User> {
+  const id = nextId("user");
+  const user: User = {
+    id,
+    username: username ?? generatePseudonym(),
+    avatarSeed: id,
+    level: 1,
+    helpfulPoints: 0,
+    createdAt: nowIso(),
+    badgeIds: [],
+  };
+  users.set(id, user);
+  return user;
+}
+
+export async function getUser(userId: string): Promise<User | undefined> {
+  return users.get(userId);
+}
+
+// ---------------------------------------------------------------------------
+// Activity recompute (mirrors the pg_cron recomputeActivity job)
+// ---------------------------------------------------------------------------
+function recomputeAll() {
+  const n = nowIso();
+  for (const conv of conversations.values()) {
+    const score = computeActivityScore(conv, n);
+    const idleMin = minutesBetween(conv.lastActivityAt, n);
+    const pastExpiry = new Date(conv.expiresAt).getTime() <= now().getTime();
+    conv.status = nextStatus(conv.status, score, idleMin, pastExpiry);
+  }
+}
+
+function toSummary(conv: Conversation, userLocation?: GeoPoint): ConversationSummary {
+  const score = computeActivityScore(conv, nowIso());
+  const dist = userLocation ? distanceMeters(conv.location, userLocation) : undefined;
+  const convMessages = messages.get(conv.id) ?? [];
+  const last = convMessages[convMessages.length - 1];
+  return {
+    ...conv,
+    activityScore: score,
+    renderSize: computeRenderSize(score, dist),
+    lastMessagePreview: last ? `${last.username}: ${last.body}` : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Map queries
+// ---------------------------------------------------------------------------
+export async function getVisibleConversations(
+  userLocation: GeoPoint,
+  opts: { radiusM?: number } = {}
+): Promise<ConversationSummary[]> {
+  recomputeAll();
+  const radius = opts.radiusM ?? 3000;
+  return Array.from(conversations.values())
+    .filter((c) => c.status !== "archived" && c.status !== "deleted")
+    .filter((c) => distanceMeters(c.location, userLocation) <= Math.max(radius, c.discoveryRadiusM))
+    .map((c) => toSummary(c, userLocation))
+    .sort((a, b) => b.activityScore - a.activityScore);
+}
+
+export async function getConversation(id: string, userLocation?: GeoPoint): Promise<ConversationSummary | undefined> {
+  const c = conversations.get(id);
+  if (!c) return undefined;
+  return toSummary(c, userLocation);
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate suggestion - naive keyword + proximity + category match, as
+// specified in Phase 1 section 3 (explicitly not semantic/embedding-based
+// for MVP).
+// ---------------------------------------------------------------------------
+function keywordOverlap(a: string, b: string): number {
+  const wa = new Set(a.toLowerCase().split(/\W+/).filter(Boolean));
+  const wb = new Set(b.toLowerCase().split(/\W+/).filter(Boolean));
+  let shared = 0;
+  wa.forEach((w) => {
+    if (wb.has(w)) shared++;
+  });
+  return shared / Math.max(1, Math.min(wa.size, wb.size));
+}
+
+export async function suggestDuplicates(
+  location: GeoPoint,
+  category: ConversationCategory,
+  title: string
+): Promise<ConversationSummary[]> {
+  return Array.from(conversations.values())
+    .filter((c) => c.status !== "archived" && c.status !== "deleted")
+    .filter((c) => c.category === category)
+    .filter((c) => distanceMeters(c.location, location) <= c.discoveryRadiusM)
+    .map((c) => ({ conv: c, overlap: keywordOverlap(c.title, title) }))
+    .filter((x) => x.overlap > 0.25)
+    .sort((a, b) => b.overlap - a.overlap)
+    .slice(0, 3)
+    .map((x) => toSummary(x.conv, location));
+}
+
+export async function createConversation(input: CreateConversationInput): Promise<CreateConversationResult> {
+  const suggestions = await suggestDuplicates(input.location, input.category, input.title);
+  if (suggestions.length > 0) {
+    // Real behavior: return suggestions and let the client prompt
+    // "join one of these instead?" before calling createConversation again
+    // with a forceCreate flag. Kept simple here: caller decides.
+    return { suggestions };
+  }
+
+  const radii = RADII[input.category];
+  const id = nextId("conv");
+  const snapped = snapToGrid(input.location);
+  const n = nowIso();
+  const conv: Conversation = {
+    id,
+    title: input.title,
+    category: input.category,
+    status: "new",
+    location: snapped,
+    venueLabel: undefined,
+    discoveryRadiusM: radii.discovery,
+    participationRadiusM: radii.participation,
+    createdBy: input.createdBy,
+    createdAt: n,
+    expiresAt: new Date(now().getTime() + radii.ttlHours * 3600 * 1000).toISOString(),
+    lastActivityAt: n,
+    participantCount: 0,
+    messagesLast15Min: 0,
+  };
+  conversations.set(id, conv);
+  messages.set(id, []);
+  participants.set(id, new Map());
+  notifyMap();
+  return { conversation: toSummary(conv, input.location), suggestions: [] };
+}
+
+// ---------------------------------------------------------------------------
+// Eligibility / join / leave - the one part of the mock that most carefully
+// mirrors "never trust the client." The caller passes a raw coordinate; this
+// function is the only place that ever sees it, and it is not persisted -
+// only the resulting state is.
+// ---------------------------------------------------------------------------
+export async function checkEligibility(
+  userId: string,
+  conversationId: string,
+  rawLocation: GeoPoint
+): Promise<EligibilityResult> {
+  const conv = conversations.get(conversationId);
+  if (!conv) return { state: "left", canPost: false, canRead: false };
+
+  const radii = RADII[conv.category];
+  const dist = distanceMeters(rawLocation, conv.location); // computed, then rawLocation is discarded
+  const convParticipants = participants.get(conversationId)!;
+  const existing = convParticipants.get(userId);
+
+  const inside = dist <= conv.participationRadiusM;
+
+  let state: ParticipantState;
+  if (inside) {
+    state = "inside";
+  } else if (existing && (existing.state === "inside" || existing.state === "grace")) {
+    const graceStart = existing.graceStartedAt ?? nowIso();
+    const minutesInGrace = minutesBetween(graceStart, nowIso());
+    if (minutesInGrace <= radii.graceMin) {
+      state = "grace";
+      convParticipants.set(userId, { ...existing, state, graceStartedAt: graceStart });
+    } else {
+      state = "read_only";
+      convParticipants.set(userId, { ...existing, state });
+    }
+  } else if (existing) {
+    state = "read_only";
+  } else {
+    // Never been inside: can see (discovery radius already filtered this in
+    // getVisibleConversations) but cannot join to post from outside the
+    // participation radius.
+    state = "read_only";
+  }
+
+  return {
+    state,
+    canPost: state === "inside" || state === "grace",
+    canRead: true,
+  };
+}
+
+export async function joinConversation(
+  userId: string,
+  conversationId: string,
+  rawLocation: GeoPoint
+): Promise<EligibilityResult> {
+  const eligibility = await checkEligibility(userId, conversationId, rawLocation);
+  const convParticipants = participants.get(conversationId)!;
+  const existing = convParticipants.get(userId);
+  convParticipants.set(userId, {
+    userId,
+    state: eligibility.state,
+    joinedAt: existing?.joinedAt ?? nowIso(),
+    graceStartedAt: eligibility.state === "grace" ? existing?.graceStartedAt ?? nowIso() : undefined,
+  });
+  recomputeParticipantCount(conversationId);
+  notifyMap();
+  notifyConversation(conversationId);
+  return eligibility;
+}
+
+export async function leaveConversation(userId: string, conversationId: string): Promise<void> {
+  const convParticipants = participants.get(conversationId);
+  convParticipants?.delete(userId);
+  recomputeParticipantCount(conversationId);
+  notifyMap();
+  notifyConversation(conversationId);
+}
+
+function recomputeParticipantCount(conversationId: string) {
+  const conv = conversations.get(conversationId);
+  const convParticipants = participants.get(conversationId);
+  if (!conv || !convParticipants) return;
+  conv.participantCount = Array.from(convParticipants.values()).filter(
+    (p) => p.state === "inside" || p.state === "grace"
+  ).length;
+}
+
+export function getParticipantState(userId: string, conversationId: string): ParticipantState | undefined {
+  return participants.get(conversationId)?.get(userId)?.state;
+}
+
+// ---------------------------------------------------------------------------
+// Messages / reactions / confirmations
+// ---------------------------------------------------------------------------
+export async function getMessages(conversationId: string): Promise<Message[]> {
+  return messages.get(conversationId) ?? [];
+}
+
+export async function sendMessage(
+  conversationId: string,
+  user: User,
+  body: string,
+  replyToId?: string
+): Promise<Message> {
+  const msg: Message = {
+    id: nextId("msg"),
+    conversationId,
+    userId: user.id,
+    username: user.username,
+    body,
+    createdAt: nowIso(),
+    replyToId,
+  };
+  const list = messages.get(conversationId) ?? [];
+  list.push(msg);
+  messages.set(conversationId, list);
+
+  const conv = conversations.get(conversationId);
+  if (conv) {
+    conv.lastActivityAt = nowIso();
+    conv.messagesLast15Min = list.filter(
+      (m) => minutesBetween(m.createdAt, nowIso()) <= 15
+    ).length;
+  }
+  notifyMap();
+  notifyConversation(conversationId);
+  return msg;
+}
+
+export async function confirmMessage(
+  messageId: string,
+  userId: string,
+  type: ConfirmationType
+): Promise<{ confirmedByCount: number }> {
+  const list = confirmations.get(messageId) ?? [];
+  const withoutUser = list.filter((c) => c.userId !== userId);
+  withoutUser.push({ messageId, userId, type });
+  confirmations.set(messageId, withoutUser);
+
+  // Reward the message author, weighted by unique confirmers, capped daily
+  // in spirit (full fraud-resistant daily cap logic is a v2 concern per the
+  // Phase 1 doc - this mock keeps the shape but not the enforcement).
+  const allMessages = Array.from(messages.values()).flat();
+  const msg = allMessages.find((m) => m.id === messageId);
+  if (msg && type === "helpful") {
+    const author = users.get(msg.userId);
+    if (author) author.helpfulPoints += 1;
+  }
+
+  const confirmedByCount = withoutUser.filter((c) => c.type === "confirm").length;
+  if (msg) notifyConversation(msg.conversationId);
+  return { confirmedByCount };
+}
+
+export async function getConfirmations(messageId: string): Promise<Confirmation[]> {
+  return confirmations.get(messageId) ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Reports / blocks
+// ---------------------------------------------------------------------------
+export async function reportTarget(
+  reporterId: string,
+  targetType: ReportTargetType,
+  targetId: string,
+  reason: string
+): Promise<Report> {
+  const report: Report = {
+    id: nextId("report"),
+    reporterId,
+    targetType,
+    targetId,
+    reason,
+    createdAt: nowIso(),
+    status: "open",
+  };
+  reports.push(report);
+  return report;
+}
+
+export async function blockUser(blockerId: string, blockedId: string): Promise<void> {
+  if (!blocks.has(blockerId)) blocks.set(blockerId, new Set());
+  blocks.get(blockerId)!.add(blockedId);
+}
+
+export function isBlocked(blockerId: string, otherUserId: string): boolean {
+  return blocks.get(blockerId)?.has(otherUserId) ?? false;
+}
+
+// ---------------------------------------------------------------------------
+// Dev / simulator mode - see src/dev for the UI. These functions are the
+// same "seams" a QA or load-testing harness would use against a real
+// backend's admin/test endpoints.
+// ---------------------------------------------------------------------------
+export async function devAddSyntheticParticipant(conversationId: string): Promise<void> {
+  const user = await createUser();
+  const conv = conversations.get(conversationId);
+  if (!conv) return;
+  await joinConversation(user.id, conversationId, jitter(conv.location, conv.participationRadiusM * 0.6));
+}
+
+export async function devAddSyntheticMessage(conversationId: string, body?: string): Promise<void> {
+  const convParticipants = participants.get(conversationId);
+  let userId = convParticipants && Array.from(convParticipants.keys())[0];
+  let user: User | undefined = userId ? users.get(userId) : undefined;
+  if (!user) {
+    user = await createUser();
+    const conv = conversations.get(conversationId);
+    if (conv) await joinConversation(user.id, conversationId, conv.location);
+  }
+  await sendMessage(conversationId, user, body ?? "Anyone have an update?");
+}
+
+export async function devExpireConversation(conversationId: string): Promise<void> {
+  const conv = conversations.get(conversationId);
+  if (!conv) return;
+  conv.expiresAt = nowIso();
+  recomputeAll();
+  notifyMap();
+}
+
+export async function devLoadScenario(name: ScenarioName, center: GeoPoint): Promise<void> {
+  const scenario = SCENARIOS[name];
+  for (const seed of scenario.conversations) {
+    const location = { lat: center.lat + seed.dLat, lng: center.lng + seed.dLng };
+    const result = await createConversation({
+      title: seed.title,
+      category: seed.category,
+      location,
+      createdBy: "seed",
+    });
+    if (!result.conversation) continue;
+    const convId = result.conversation.id;
+    // backdate creation slightly and seed participants/messages so the
+    // scenario doesn't render as suspiciously brand-new
+    const convRecord = conversations.get(convId)!;
+    convRecord.createdAt = new Date(now().getTime() - seed.ageMinutes * 60000).toISOString();
+    convRecord.lastActivityAt = new Date(now().getTime() - Math.min(seed.ageMinutes, 2) * 60000).toISOString();
+    for (let i = 0; i < seed.participants; i++) {
+      await devAddSyntheticParticipant(convId);
+    }
+    for (const line of seed.seedMessages) {
+      await devAddSyntheticMessage(convId, line);
+    }
+  }
+  notifyMap();
+}
+
+export function devResetAll(): void {
+  users.clear();
+  conversations.clear();
+  messages.clear();
+  participants.clear();
+  confirmations.clear();
+  reports.length = 0;
+  blocks.clear();
+  clockOffsetMs = 0;
+  notifyMap();
+}
+
+export function devListConversationIds(): string[] {
+  return Array.from(conversations.keys());
+}
