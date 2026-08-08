@@ -5,6 +5,7 @@ import { heatLevel } from "../services/activityScore";
 
 interface Props {
   conversation?: ConversationSummary;
+  hiddenNearby?: ConversationSummary[];
   onClose: () => void;
   onJoin: (conversation: ConversationSummary) => void;
 }
@@ -22,7 +23,7 @@ const CATEGORY_LABELS: Record<string, string> = {
  * underneath - reinforces "you're looking at the world," not "you're
  * browsing a list."
  */
-export function ConversationPreviewSheet({ conversation, onClose, onJoin }: Props) {
+export function ConversationPreviewSheet({ conversation, hiddenNearby = [], onClose, onJoin }: Props) {
   if (!conversation) return null;
   const level = heatLevel(conversation.activityScore);
 
@@ -60,6 +61,17 @@ export function ConversationPreviewSheet({ conversation, onClose, onJoin }: Prop
           <Text style={styles.previewMuted}>No messages yet - be the first to say something.</Text>
         )}
 
+        {hiddenNearby.length > 0 && (
+          <View style={styles.nearbyBox}>
+            <Text style={styles.nearbyTitle}>
+              {hiddenNearby.length} more specific {hiddenNearby.length === 1 ? "chat" : "chats"} nearby - zoom in to see:
+            </Text>
+            <Text style={styles.nearbyList} numberOfLines={3}>
+              {hiddenNearby.map((c) => c.title).join(" · ")}
+            </Text>
+          </View>
+        )}
+
         <Pressable style={styles.joinButton} onPress={() => onJoin(conversation)}>
           <Text style={styles.joinButtonText}>Join</Text>
         </Pressable>
@@ -93,6 +105,9 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 18, fontWeight: "500", marginTop: 2 },
   preview: { fontSize: 14, color: "#444441", marginBottom: 20 },
   previewMuted: { fontSize: 14, color: "#888780", fontStyle: "italic", marginBottom: 20 },
+  nearbyBox: { backgroundColor: "#F1EFE8", borderRadius: 10, padding: 12, marginBottom: 20 },
+  nearbyTitle: { fontSize: 12, fontWeight: "500", color: "#444441", marginBottom: 4 },
+  nearbyList: { fontSize: 12, color: "#5F5E5A" },
   joinButton: { backgroundColor: "#2C2C2A", borderRadius: 10, paddingVertical: 14, alignItems: "center" },
   joinButtonText: { color: "white", fontSize: 15, fontWeight: "500" },
 });

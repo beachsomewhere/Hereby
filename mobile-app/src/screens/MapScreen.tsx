@@ -10,8 +10,9 @@ import { BubbleMarker } from "../components/BubbleMarker";
 import { ClusterMarker } from "../components/ClusterMarker";
 import { ConversationPreviewSheet } from "../components/ConversationPreviewSheet";
 import { CreateConversationSheet } from "../components/CreateConversationSheet";
-import { bboxFromRegion, buildClusterIndex, dominantVenueLabel, isVisibleAtZoom, zoomFromRegion } from "../services/clustering";
+import { bboxFromRegion, buildClusterIndex, dominantVenueLabel, findWiderConversation, isVisibleAtZoom, zoomFromRegion } from "../services/clustering";
 import { computeRenderSize } from "../services/activityScore";
+import { distanceMeters } from "../services/geo";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Map">;
 
@@ -35,6 +36,7 @@ export function MapScreen({ navigation }: Props) {
   );
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selected, setSelected] = useState<ConversationSummary>();
+  const [previewNearby, setPreviewNearby] = useState<ConversationSummary[]>([]);
   const [createVisible, setCreateVisible] = useState(false);
   const [createLocation, setCreateLocation] = useState<GeoPoint>();
 
@@ -69,6 +71,23 @@ export function MapScreen({ navigation }: Props) {
     () => conversations.filter((c) => isVisibleAtZoom(c.category, zoom)),
     [conversations, zoom]
   );
+
+  // Opens the preview sheet for a conversation, alongside any nearby ones
+  // worth surfacing as "more specific chats to zoom in for" - either
+  // explicitly passed in (e.g. the members of a cluster whose "own chat"
+  // this is) or, failing that, whatever's nearby but currently hidden by
+  // zoom.
+  function selectConversation(conversation: ConversationSummary, extraNearby: ConversationSummary[] = []) {
+    setSelected(conversation);
+    const zoomHidden = conversations.filter(
+      (c) =>
+        c.id !== conversation.id &&
+        !extraNearby.some((e) => e.id === c.id) &&
+        !isVisibleAtZoom(c.category, zoom) &&
+        distanceMeters(c.location, conversation.location) <= conversation.discoveryRadiusM
+    );
+    setPreviewNearby([...extraNearby, ...zoomHidden]);
+  }
 
   const clusterIndex = useMemo(() => {
     if (visibleConversations.length === 0) return undefined;
@@ -106,6 +125,7 @@ export function MapScreen({ navigation }: Props) {
   async function handleJoin(conversation: ConversationSummary) {
     if (!currentUser || !location) return;
     setSelected(undefined);
+    setPreviewNearby([]);
     await backend.joinConversation(currentUser.id, conversation.id, location);
     navigation.navigate("Conversation", { conversationId: conversation.id });
   }
@@ -146,20 +166,25 @@ export function MapScreen({ navigation }: Props) {
                 label={dominantVenueLabel(leaves)}
                 activityScore={aggregateScore}
                 renderSize={computeRenderSize(aggregateScore)}
-                onPress={() =>
+                onPress={() => {
+                  const wider = findWiderConversation(leaves, { lat, lng }, conversations);
+                  if (wider) {
+                    selectConversation(wider, leaves);
+                    return;
+                  }
                   setRegion((r) => ({
                     ...r,
                     latitude: lat,
                     longitude: lng,
                     latitudeDelta: r.latitudeDelta / 3,
                     longitudeDelta: r.longitudeDelta / 3,
-                  }))
-                }
+                  }));
+                }}
               />
             );
           }
           const conversation: ConversationSummary = props.conversation;
-          return <BubbleMarker key={conversation.id} conversation={conversation} onPress={setSelected} />;
+          return <BubbleMarker key={conversation.id} conversation={conversation} onPress={(c) => selectConversation(c)} />;
         })}
       </MapView>
 
@@ -187,7 +212,15 @@ export function MapScreen({ navigation }: Props) {
         <Text style={styles.startChatButtonText}>Start chat</Text>
       </Pressable>
 
-      <ConversationPreviewSheet conversation={selected} onClose={() => setSelected(undefined)} onJoin={handleJoin} />
+      <ConversationPreviewSheet
+        conversation={selected}
+        hiddenNearby={previewNearby}
+        onClose={() => {
+          setSelected(undefined);
+          setPreviewNearby([]);
+        }}
+        onJoin={handleJoin}
+      />
 
       <CreateConversationSheet
         visible={createVisible}

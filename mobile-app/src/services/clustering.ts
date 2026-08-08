@@ -1,5 +1,6 @@
 import Supercluster from "supercluster";
-import { ConversationCategory, ConversationSummary } from "./types";
+import { ConversationCategory, ConversationSummary, GeoPoint } from "./types";
+import { distanceMeters } from "./geo";
 
 // Thin wrapper around supercluster (the same library used in Mapbox's own
 // clustering examples). This is purely a display concern - see Phase 1
@@ -54,6 +55,33 @@ export const ZOOM_VISIBILITY: Record<ConversationCategory, number> = {
 
 export function isVisibleAtZoom(category: ConversationCategory, zoom: number): boolean {
   return zoom >= ZOOM_VISIBILITY[category];
+}
+
+/**
+ * A cluster of nearby conversations isn't a real, persistent entity - it's
+ * just several already-real conversations that happen to render close
+ * together at this zoom. If a genuinely broader conversation already
+ * covers that spot (lower zoom threshold than every clustered item, and the
+ * cluster's centroid falls inside its discovery radius), that's what
+ * "the cluster's own chat" should be - preferring the narrowest such match.
+ * Returns undefined if no covering conversation exists yet.
+ */
+export function findWiderConversation(
+  leaves: ConversationSummary[],
+  centroid: GeoPoint,
+  all: ConversationSummary[]
+): ConversationSummary | undefined {
+  if (leaves.length === 0) return undefined;
+  const leafIds = new Set(leaves.map((l) => l.id));
+  const leafMinThreshold = Math.min(...leaves.map((l) => ZOOM_VISIBILITY[l.category]));
+  const candidates = all.filter(
+    (c) =>
+      !leafIds.has(c.id) &&
+      ZOOM_VISIBILITY[c.category] < leafMinThreshold &&
+      distanceMeters(c.location, centroid) <= c.discoveryRadiusM
+  );
+  candidates.sort((a, b) => ZOOM_VISIBILITY[b.category] - ZOOM_VISIBILITY[a.category]);
+  return candidates[0];
 }
 
 /** Best-guess label for a cluster: the most common venueLabel among its points, falling back to undefined. */

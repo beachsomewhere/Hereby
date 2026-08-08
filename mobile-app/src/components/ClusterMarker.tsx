@@ -46,7 +46,7 @@ export function ClusterMarker({ coordinate, count, label, activityScore, renderS
         ]}
       >
         <Text style={[styles.label, { color: colors.text }]} numberOfLines={2}>
-          {label ?? `${count} chats`}
+          {label ?? "Nearby chats"}
         </Text>
         <Text style={[styles.count, { color: colors.text }]}>{count}</Text>
       </View>
