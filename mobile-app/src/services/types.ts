@@ -51,6 +51,16 @@ export interface Badge {
   icon: string;
 }
 
+export interface Thread {
+  id: string;
+  conversationId: string;
+  title: string;
+  isGeneral: boolean;
+  createdBy: string;
+  createdAt: string;
+  lastActivityAt: string;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -73,11 +83,13 @@ export interface ConversationSummary extends Conversation {
   activityScore: number;
   renderSize: number;
   lastMessagePreview?: string;
+  threadCount: number;
 }
 
 export interface Message {
   id: string;
   conversationId: string;
+  threadId: string;
   userId: string;
   username: string;
   body: string;

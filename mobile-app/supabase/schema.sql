@@ -104,11 +104,34 @@ create table public.conversation_participants (
 );
 
 -- ---------------------------------------------------------------------------
+-- Threads - every conversation always has exactly one is_general=true row,
+-- inserted alongside the conversation itself (see createConversation Edge
+-- Function). Participants can create additional threads scoped to the same
+-- location conversation; eligibility/participation stays conversation-level,
+-- not per-thread.
+-- ---------------------------------------------------------------------------
+create table public.threads (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  title text not null,
+  is_general boolean not null default false,
+  created_by uuid not null references public.users(id),
+  created_at timestamptz not null default now(),
+  last_activity_at timestamptz not null default now()
+);
+create index threads_conversation_id_idx on public.threads(conversation_id);
+-- Exactly one General thread per conversation.
+create unique index threads_one_general_per_conversation_idx
+  on public.threads(conversation_id)
+  where is_general;
+
+-- ---------------------------------------------------------------------------
 -- Messages, reactions, confirmations
 -- ---------------------------------------------------------------------------
 create table public.messages (
   id uuid primary key default gen_random_uuid(),
   conversation_id uuid not null references public.conversations(id) on delete cascade,
+  thread_id uuid not null references public.threads(id) on delete cascade,
   user_id uuid not null references public.users(id),
   body text not null check (char_length(body) <= 2000),
   reply_to_id uuid references public.messages(id),
@@ -116,6 +139,7 @@ create table public.messages (
   deleted_at timestamptz,
   flagged boolean not null default false
 );
+create index messages_thread_id_idx on public.messages(thread_id, created_at);
 create index messages_conversation_id_idx on public.messages(conversation_id, created_at);
 
 create table public.reactions (
@@ -177,6 +201,7 @@ create table public.moderation_actions (
 -- Row Level Security (sketch - tighten per-column before production use)
 -- ---------------------------------------------------------------------------
 alter table public.conversations enable row level security;
+alter table public.threads enable row level security;
 alter table public.messages enable row level security;
 alter table public.conversation_participants enable row level security;
 alter table public.user_trust_scores enable row level security; -- no policies -> service role only
@@ -188,6 +213,26 @@ create policy "conversations are readable within discovery radius"
   -- caller's location), not in the policy itself, since RLS can't easily
   -- see a request-time coordinate. See getVisibleConversations in the
   -- client, mirrored server-side by a SECURITY DEFINER function.
+
+create policy "threads are readable by anyone who can read the conversation"
+  on public.threads for select
+  using (
+    exists (
+      select 1 from public.conversations c
+      where c.id = threads.conversation_id and c.status not in ('archived', 'deleted')
+    )
+  );
+
+create policy "threads can only be created by participants who are inside or in grace"
+  on public.threads for insert
+  with check (
+    exists (
+      select 1 from public.conversation_participants cp
+      where cp.conversation_id = threads.conversation_id
+        and cp.user_id = (select id from public.users where auth_id = auth.uid())
+        and cp.state in ('inside', 'grace')
+    )
+  );
 
 create policy "messages are readable by anyone who can read the conversation"
   on public.messages for select

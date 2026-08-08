@@ -25,6 +25,7 @@ import {
   ConfirmationType,
   Report,
   ReportTargetType,
+  Thread,
   User,
 } from "./types";
 import { distanceMeters, snapToGrid, jitter } from "./geo";
@@ -57,6 +58,20 @@ const RADII: Record<ConversationCategory, { discovery: number; participation: nu
   corridor: { discovery: 2500, participation: 350, graceMin: 15, ttlHours: 2 },
 };
 
+// Grid cell size used to generalize/snap a conversation's stored location
+// (see snapToGrid). Sized per category so the worst-case snap offset
+// (~cellMeters * sqrt(2)/2) never exceeds that category's own participation
+// radius above - otherwise a chat's own creator could snap to just outside
+// their own eligibility radius. The default 120m grid has plenty of margin
+// for venue/area/corridor's much larger radii, but micro_location's 60m
+// radius needs a tighter grid.
+const SNAP_CELL_M: Record<ConversationCategory, number> = {
+  micro_location: 40,
+  venue: 120,
+  area: 120,
+  corridor: 120,
+};
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -69,7 +84,8 @@ interface ParticipantRecord {
 
 const users = new Map<string, User>();
 const conversations = new Map<string, Conversation>();
-const messages = new Map<string, Message[]>(); // conversationId -> messages
+const threads = new Map<string, Thread>();
+const messages = new Map<string, Message[]>(); // threadId -> messages
 const participants = new Map<string, Map<string, ParticipantRecord>>(); // conversationId -> userId -> record
 const confirmations = new Map<string, Confirmation[]>(); // messageId -> confirmations
 const reports: Report[] = [];
@@ -83,12 +99,16 @@ function nextId(prefix: string): string {
 type Listener = () => void;
 const mapListeners = new Set<Listener>();
 const conversationListeners = new Map<string, Set<Listener>>();
+const threadListeners = new Map<string, Set<Listener>>();
 
 function notifyMap() {
   mapListeners.forEach((l) => l());
 }
 function notifyConversation(conversationId: string) {
   conversationListeners.get(conversationId)?.forEach((l) => l());
+}
+function notifyThread(threadId: string) {
+  threadListeners.get(threadId)?.forEach((l) => l());
 }
 
 export function subscribeToMap(listener: Listener): () => void {
@@ -99,6 +119,11 @@ export function subscribeToConversation(conversationId: string, listener: Listen
   if (!conversationListeners.has(conversationId)) conversationListeners.set(conversationId, new Set());
   conversationListeners.get(conversationId)!.add(listener);
   return () => conversationListeners.get(conversationId)?.delete(listener);
+}
+export function subscribeToThread(threadId: string, listener: Listener): () => void {
+  if (!threadListeners.has(threadId)) threadListeners.set(threadId, new Set());
+  threadListeners.get(threadId)!.add(listener);
+  return () => threadListeners.get(threadId)?.delete(listener);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,16 +171,29 @@ function recomputeAll() {
   }
 }
 
+function getConversationThreads(conversationId: string): Thread[] {
+  return Array.from(threads.values()).filter((t) => t.conversationId === conversationId);
+}
+
+function getConversationMessages(conversationId: string): Message[] {
+  return getConversationThreads(conversationId).flatMap((t) => messages.get(t.id) ?? []);
+}
+
 function toSummary(conv: Conversation, userLocation?: GeoPoint): ConversationSummary {
   const score = computeActivityScore(conv, nowIso());
   const dist = userLocation ? distanceMeters(conv.location, userLocation) : undefined;
-  const convMessages = messages.get(conv.id) ?? [];
-  const last = convMessages[convMessages.length - 1];
+  const convThreads = getConversationThreads(conv.id);
+  const convMessages = convThreads.flatMap((t) => messages.get(t.id) ?? []);
+  const last = convMessages.reduce<Message | undefined>(
+    (latest, m) => (!latest || m.createdAt > latest.createdAt ? m : latest),
+    undefined
+  );
   return {
     ...conv,
     activityScore: score,
     renderSize: computeRenderSize(score, dist),
     lastMessagePreview: last ? `${last.username}: ${last.body}` : undefined,
+    threadCount: convThreads.length,
   };
 }
 
@@ -223,7 +261,7 @@ export async function createConversation(input: CreateConversationInput): Promis
 
   const radii = RADII[input.category];
   const id = nextId("conv");
-  const snapped = snapToGrid(input.location);
+  const snapped = snapToGrid(input.location, SNAP_CELL_M[input.category]);
   const n = nowIso();
   const conv: Conversation = {
     id,
@@ -242,10 +280,38 @@ export async function createConversation(input: CreateConversationInput): Promis
     messagesLast15Min: 0,
   };
   conversations.set(id, conv);
-  messages.set(id, []);
   participants.set(id, new Map());
+  createThreadRecord(id, "General", input.createdBy, true);
   notifyMap();
   return { conversation: toSummary(conv, input.location), suggestions: [] };
+}
+
+// ---------------------------------------------------------------------------
+// Threads - every conversation always has exactly one "General" thread
+// (created alongside the conversation, cannot be removed); participants can
+// spin up additional threads scoped to the same location conversation.
+// ---------------------------------------------------------------------------
+function createThreadRecord(conversationId: string, title: string, createdBy: string, isGeneral: boolean): Thread {
+  const id = nextId("thread");
+  const n = nowIso();
+  const thread: Thread = { id, conversationId, title, isGeneral, createdBy, createdAt: n, lastActivityAt: n };
+  threads.set(id, thread);
+  messages.set(id, []);
+  return thread;
+}
+
+export async function createThread(conversationId: string, title: string, userId: string): Promise<Thread> {
+  const thread = createThreadRecord(conversationId, title, userId, false);
+  notifyConversation(conversationId);
+  notifyMap();
+  return thread;
+}
+
+export async function getThreads(conversationId: string): Promise<Thread[]> {
+  return getConversationThreads(conversationId).sort((a, b) => {
+    if (a.isGeneral !== b.isGeneral) return a.isGeneral ? -1 : 1;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -342,38 +408,44 @@ export function getParticipantState(userId: string, conversationId: string): Par
 // ---------------------------------------------------------------------------
 // Messages / reactions / confirmations
 // ---------------------------------------------------------------------------
-export async function getMessages(conversationId: string): Promise<Message[]> {
-  return messages.get(conversationId) ?? [];
+export async function getMessages(threadId: string): Promise<Message[]> {
+  return messages.get(threadId) ?? [];
 }
 
 export async function sendMessage(
-  conversationId: string,
+  threadId: string,
   user: User,
   body: string,
   replyToId?: string
 ): Promise<Message> {
+  const thread = threads.get(threadId);
+  if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+
   const msg: Message = {
     id: nextId("msg"),
-    conversationId,
+    conversationId: thread.conversationId,
+    threadId,
     userId: user.id,
     username: user.username,
     body,
     createdAt: nowIso(),
     replyToId,
   };
-  const list = messages.get(conversationId) ?? [];
+  const list = messages.get(threadId) ?? [];
   list.push(msg);
-  messages.set(conversationId, list);
+  messages.set(threadId, list);
+  thread.lastActivityAt = msg.createdAt;
 
-  const conv = conversations.get(conversationId);
+  const conv = conversations.get(thread.conversationId);
   if (conv) {
-    conv.lastActivityAt = nowIso();
-    conv.messagesLast15Min = list.filter(
+    conv.lastActivityAt = msg.createdAt;
+    conv.messagesLast15Min = getConversationMessages(thread.conversationId).filter(
       (m) => minutesBetween(m.createdAt, nowIso()) <= 15
     ).length;
   }
   notifyMap();
-  notifyConversation(conversationId);
+  notifyConversation(thread.conversationId);
+  notifyThread(threadId);
   return msg;
 }
 
@@ -398,7 +470,10 @@ export async function confirmMessage(
   }
 
   const confirmedByCount = withoutUser.filter((c) => c.type === "confirm").length;
-  if (msg) notifyConversation(msg.conversationId);
+  if (msg) {
+    notifyConversation(msg.conversationId);
+    notifyThread(msg.threadId);
+  }
   return { confirmedByCount };
 }
 
@@ -450,6 +525,9 @@ export async function devAddSyntheticParticipant(conversationId: string): Promis
 }
 
 export async function devAddSyntheticMessage(conversationId: string, body?: string): Promise<void> {
+  const generalThread = getConversationThreads(conversationId).find((t) => t.isGeneral);
+  if (!generalThread) return;
+
   const convParticipants = participants.get(conversationId);
   let userId = convParticipants && Array.from(convParticipants.keys())[0];
   let user: User | undefined = userId ? users.get(userId) : undefined;
@@ -458,7 +536,7 @@ export async function devAddSyntheticMessage(conversationId: string, body?: stri
     const conv = conversations.get(conversationId);
     if (conv) await joinConversation(user.id, conversationId, conv.location);
   }
-  await sendMessage(conversationId, user, body ?? "Anyone have an update?");
+  await sendMessage(generalThread.id, user, body ?? "Anyone have an update?");
 }
 
 export async function devExpireConversation(conversationId: string): Promise<void> {
@@ -499,6 +577,7 @@ export async function devLoadScenario(name: ScenarioName, center: GeoPoint): Pro
 export function devResetAll(): void {
   users.clear();
   conversations.clear();
+  threads.clear();
   messages.clear();
   participants.clear();
   confirmations.clear();

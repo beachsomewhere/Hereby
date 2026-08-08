@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import MapView, { Region } from "react-native-maps";
+import MapView, { Marker, Region } from "react-native-maps";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAppStore, effectiveLocation } from "../state/useAppStore";
@@ -10,7 +10,8 @@ import { BubbleMarker } from "../components/BubbleMarker";
 import { ClusterMarker } from "../components/ClusterMarker";
 import { ConversationPreviewSheet } from "../components/ConversationPreviewSheet";
 import { CreateConversationSheet } from "../components/CreateConversationSheet";
-import { bboxFromRegion, buildClusterIndex, dominantVenueLabel, zoomFromRegion } from "../services/clustering";
+import { bboxFromRegion, buildClusterIndex, dominantVenueLabel, isVisibleAtZoom, zoomFromRegion } from "../services/clustering";
+import { computeRenderSize } from "../services/activityScore";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Map">;
 
@@ -25,7 +26,10 @@ export function MapScreen({ navigation }: Props) {
   const currentUser = useAppStore((s) => s.currentUser);
   const location = useAppStore(effectiveLocation);
   const devModeEnabled = useAppStore((s) => s.devModeEnabled);
+  const devSimulatedLocation = useAppStore((s) => s.devSimulatedLocation);
+  const setDevSimulatedLocation = useAppStore((s) => s.setDevSimulatedLocation);
 
+  const mapRef = useRef<MapView>(null);
   const [region, setRegion] = useState<Region>(
     location ? { ...DEFAULT_REGION, latitude: location.lat, longitude: location.lng } : DEFAULT_REGION
   );
@@ -51,27 +55,46 @@ export function MapScreen({ navigation }: Props) {
   }, [refresh]);
 
   useEffect(() => {
-    if (location) {
-      setRegion((r) => ({ ...r, latitude: location.lat, longitude: location.lng }));
-    }
+    if (!location) return;
+    setRegion((r) => {
+      const next = { ...r, latitude: location.lat, longitude: location.lng };
+      mapRef.current?.animateToRegion(next, 500);
+      return next;
+    });
   }, [location?.lat, location?.lng]);
 
+  const zoom = zoomFromRegion(region.longitudeDelta);
+
+  const visibleConversations = useMemo(
+    () => conversations.filter((c) => isVisibleAtZoom(c.category, zoom)),
+    [conversations, zoom]
+  );
+
   const clusterIndex = useMemo(() => {
-    if (conversations.length === 0) return undefined;
-    return buildClusterIndex(conversations);
-  }, [conversations]);
+    if (visibleConversations.length === 0) return undefined;
+    return buildClusterIndex(visibleConversations);
+  }, [visibleConversations]);
 
   const clusterItems = useMemo(() => {
     if (!clusterIndex) return [];
     const bbox = bboxFromRegion(region);
-    const zoom = zoomFromRegion(region.longitudeDelta);
     return clusterIndex.getClusters(bbox, zoom);
-  }, [clusterIndex, region]);
+  }, [clusterIndex, region, zoom]);
 
   function handleLongPress(e: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) {
     const { latitude, longitude } = e.nativeEvent.coordinate;
     setCreateLocation({ lat: latitude, lng: longitude });
     setCreateVisible(true);
+  }
+
+  // Dev-mode convenience: a plain tap on the map "teleports" the simulated
+  // GPS location there, as an alternative to typing lat/lng into the dev
+  // panel. Long-press (above) is a separate gesture and still creates a
+  // conversation, so the two don't conflict.
+  function handleMapPress(e: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) {
+    if (!devModeEnabled) return;
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    setDevSimulatedLocation({ lat: latitude, lng: longitude });
   }
 
   function handleStartChatPress() {
@@ -90,12 +113,23 @@ export function MapScreen({ navigation }: Props) {
   return (
     <View style={styles.container}>
       <MapView
+        ref={mapRef}
         style={StyleSheet.absoluteFill}
         initialRegion={region}
         onRegionChangeComplete={setRegion}
         onLongPress={handleLongPress}
+        onPress={handleMapPress}
         showsUserLocation={!devModeEnabled}
       >
+        {devModeEnabled && devSimulatedLocation && (
+          <Marker
+            coordinate={{ latitude: devSimulatedLocation.lat, longitude: devSimulatedLocation.lng }}
+            pinColor="dodgerblue"
+            title="Simulated location"
+            description="Tap anywhere on the map to move this"
+          />
+        )}
+
         {clusterItems.map((item) => {
           const [lng, lat] = item.geometry.coordinates;
           const props = item.properties as any;
@@ -103,12 +137,15 @@ export function MapScreen({ navigation }: Props) {
             const leaves = (clusterIndex?.getLeaves(props.cluster_id, Infinity) ?? []).map(
               (leaf) => (leaf.properties as any).conversation as ConversationSummary
             );
+            const aggregateScore = leaves.reduce((sum, c) => sum + c.activityScore, 0);
             return (
               <ClusterMarker
                 key={`cluster-${props.cluster_id}`}
                 coordinate={{ latitude: lat, longitude: lng }}
                 count={props.point_count}
                 label={dominantVenueLabel(leaves)}
+                activityScore={aggregateScore}
+                renderSize={computeRenderSize(aggregateScore)}
                 onPress={() =>
                   setRegion((r) => ({
                     ...r,
@@ -131,6 +168,12 @@ export function MapScreen({ navigation }: Props) {
           <Text style={styles.emptyStateText}>
             It's quiet here right now. Be the first to start a chat, or open dev mode to load a demo scenario.
           </Text>
+        </View>
+      )}
+
+      {conversations.length > 0 && visibleConversations.length === 0 && (
+        <View style={styles.emptyState} pointerEvents="none">
+          <Text style={styles.emptyStateText}>Zoom in to see more specific chats nearby.</Text>
         </View>
       )}
 

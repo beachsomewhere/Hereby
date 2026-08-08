@@ -1,5 +1,5 @@
 import Supercluster from "supercluster";
-import { ConversationSummary } from "./types";
+import { ConversationCategory, ConversationSummary } from "./types";
 
 // Thin wrapper around supercluster (the same library used in Mapbox's own
 // clustering examples). This is purely a display concern - see Phase 1
@@ -39,6 +39,21 @@ export function bboxFromRegion(region: { latitude: number; longitude: number; la
 export function zoomFromRegion(longitudeDelta: number): number {
   const zoom = Math.log2(360 / longitudeDelta);
   return Math.max(0, Math.min(20, Math.round(zoom)));
+}
+
+// Minimum zoom (see zoomFromRegion, 0-20 scale) at which each category's
+// conversations become visible on the map - the wider/broader a category,
+// the further out it stays visible; more specific ones only appear once
+// you've zoomed in past them. Purely a display concern, tunable.
+export const ZOOM_VISIBILITY: Record<ConversationCategory, number> = {
+  area: 9,
+  corridor: 9,
+  venue: 12,
+  micro_location: 15,
+};
+
+export function isVisibleAtZoom(category: ConversationCategory, zoom: number): boolean {
+  return zoom >= ZOOM_VISIBILITY[category];
 }
 
 /** Best-guess label for a cluster: the most common venueLabel among its points, falling back to undefined. */

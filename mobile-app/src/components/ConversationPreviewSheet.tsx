@@ -46,6 +46,10 @@ export function ConversationPreviewSheet({ conversation, onClose, onJoin }: Prop
             <Text style={styles.statLabel}>Activity</Text>
             <Text style={styles.statValue}>{level === "hot" ? "Hot" : level === "active" ? "Active" : "New"}</Text>
           </View>
+          <View style={styles.stat}>
+            <Text style={styles.statLabel}>Threads</Text>
+            <Text style={styles.statValue}>{conversation.threadCount}</Text>
+          </View>
         </View>
 
         {conversation.lastMessagePreview ? (

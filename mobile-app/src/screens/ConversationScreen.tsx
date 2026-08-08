@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,9 +15,10 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAppStore, effectiveLocation } from "../state/useAppStore";
 import * as backend from "../services/mockBackend";
-import { ConfirmationType, ConversationSummary, Message, ParticipantState, User } from "../services/types";
+import { ConfirmationType, ConversationSummary, Message, ParticipantState, Thread, User } from "../services/types";
 import { MessageBubble } from "../components/MessageBubble";
 import { ProfileCard } from "../components/ProfileCard";
+import { CreateThreadSheet } from "../components/CreateThreadSheet";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Conversation">;
 
@@ -35,21 +37,28 @@ export function ConversationScreen({ route, navigation }: Props) {
   const blockUserInStore = useAppStore((s) => s.blockUser);
 
   const [conversation, setConversation] = useState<ConversationSummary>();
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string>();
   const [messages, setMessages] = useState<Message[]>([]);
   const [participantState, setParticipantState] = useState<ParticipantState>("inside");
   const [draft, setDraft] = useState("");
   const [replyTo, setReplyTo] = useState<Message>();
   const [profileUser, setProfileUser] = useState<User>();
   const [confirmedCounts, setConfirmedCounts] = useState<Record<string, number>>({});
+  const [createThreadVisible, setCreateThreadVisible] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [conv, msgs] = await Promise.all([
+    const [conv, threadList] = await Promise.all([
       backend.getConversation(conversationId, location),
-      backend.getMessages(conversationId),
+      backend.getThreads(conversationId),
     ]);
     setConversation(conv);
-    setMessages(msgs.filter((m) => !m.deletedAt));
+    setThreads(threadList);
     navigation.setOptions({ title: conv?.title ?? "" });
+
+    // Default to the General thread once threads have loaded, but never
+    // stomp on a thread the user has already switched to.
+    setActiveThreadId((current) => current ?? threadList.find((t) => t.isGeneral)?.id ?? threadList[0]?.id);
 
     if (currentUser && location) {
       const eligibility = await backend.checkEligibility(currentUser.id, conversationId, location);
@@ -67,9 +76,26 @@ export function ConversationScreen({ route, navigation }: Props) {
     };
   }, [refresh, conversationId]);
 
+  const refreshMessages = useCallback(async () => {
+    if (!activeThreadId) return;
+    const msgs = await backend.getMessages(activeThreadId);
+    setMessages(msgs.filter((m) => !m.deletedAt));
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    if (!activeThreadId) return;
+    refreshMessages();
+    const unsubscribe = backend.subscribeToThread(activeThreadId, refreshMessages);
+    const interval = setInterval(refreshMessages, 6000);
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, [refreshMessages, activeThreadId]);
+
   async function handleSend() {
-    if (!currentUser || !draft.trim() || participantState === "read_only" || participantState === "left") return;
-    await backend.sendMessage(conversationId, currentUser, draft.trim(), replyTo?.id);
+    if (!currentUser || !activeThreadId || !draft.trim() || participantState === "read_only" || participantState === "left") return;
+    await backend.sendMessage(activeThreadId, currentUser, draft.trim(), replyTo?.id);
     setDraft("");
     setReplyTo(undefined);
   }
@@ -98,6 +124,7 @@ export function ConversationScreen({ route, navigation }: Props) {
   }
 
   const banner = STATE_BANNER[participantState];
+  const canPost = participantState === "inside" || participantState === "grace";
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -106,6 +133,30 @@ export function ConversationScreen({ route, navigation }: Props) {
           <Text style={styles.bannerText}>{banner}</Text>
         </View>
       )}
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.threadRow}
+        contentContainerStyle={styles.threadRowContent}
+      >
+        {threads.map((t) => (
+          <Pressable
+            key={t.id}
+            onPress={() => setActiveThreadId(t.id)}
+            style={[styles.threadChip, activeThreadId === t.id && styles.threadChipActive]}
+          >
+            <Text style={[styles.threadChipText, activeThreadId === t.id && styles.threadChipTextActive]}>
+              {t.title}
+            </Text>
+          </Pressable>
+        ))}
+        {canPost && (
+          <Pressable onPress={() => setCreateThreadVisible(true)} style={styles.threadChipAdd}>
+            <Text style={styles.threadChipAddText}>+ New thread</Text>
+          </Pressable>
+        )}
+      </ScrollView>
 
       <FlatList
         data={messages.filter((m) => !currentUser || !blockedUserIds.has(m.userId) || m.userId === currentUser.id)}
@@ -162,6 +213,22 @@ export function ConversationScreen({ route, navigation }: Props) {
           setProfileUser(undefined);
         }}
       />
+
+      <CreateThreadSheet
+        visible={createThreadVisible}
+        conversationId={conversationId}
+        userId={currentUser?.id}
+        onClose={() => setCreateThreadVisible(false)}
+        onCreated={(thread) => {
+          // Don't append here - creating a thread already fires
+          // notifyConversation, which drives this screen's own
+          // subscribeToConversation-based refresh() to re-fetch the
+          // authoritative thread list. Appending on top of that raced and
+          // sometimes produced the same thread twice.
+          setCreateThreadVisible(false);
+          setActiveThreadId(thread.id);
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -170,6 +237,14 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "white" },
   banner: { backgroundColor: "#FAEEDA", padding: 10 },
   bannerText: { fontSize: 12, color: "#412402", textAlign: "center" },
+  threadRow: { flexGrow: 0, borderBottomWidth: 1, borderBottomColor: "#EDEBE3" },
+  threadRowContent: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingVertical: 10 },
+  threadChip: { borderWidth: 1, borderColor: "#D3D1C7", borderRadius: 999, paddingVertical: 6, paddingHorizontal: 12 },
+  threadChipActive: { backgroundColor: "#2C2C2A", borderColor: "#2C2C2A" },
+  threadChipText: { fontSize: 12, color: "#444441", fontWeight: "500" },
+  threadChipTextActive: { color: "white" },
+  threadChipAdd: { borderWidth: 1, borderColor: "#D3D1C7", borderStyle: "dashed", borderRadius: 999, paddingVertical: 6, paddingHorizontal: 12 },
+  threadChipAddText: { fontSize: 12, color: "#5F5E5A" },
   list: { paddingVertical: 12 },
   replyBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#F1EFE8", paddingHorizontal: 14, paddingVertical: 8 },
   replyText: { fontSize: 12, color: "#444441", flex: 1 },

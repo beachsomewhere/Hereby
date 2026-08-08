@@ -28,6 +28,15 @@ export const SCENARIOS: Record<string, Scenario> = {
     description: "Several gate/flight conversations clustered in one terminal, plus a security-line thread.",
     conversations: [
       {
+        title: "What's going on at the airport today?",
+        category: "area",
+        dLat: 0,
+        dLng: 0,
+        participants: 35,
+        ageMinutes: 120,
+        seedMessages: ["Anyone else seeing delays across the board?", "Storms rolling through, expect ripple effects"],
+      },
+      {
         title: "UA663 delay",
         category: "micro_location",
         dLat: 0.0006,
@@ -123,6 +132,15 @@ export const SCENARIOS: Record<string, Scenario> = {
     label: "Conference",
     description: "One session-level conversation and a broader hallway-track thread.",
     conversations: [
+      {
+        title: "General conference chatter",
+        category: "area",
+        dLat: 0,
+        dLng: 0,
+        participants: 40,
+        ageMinutes: 150,
+        seedMessages: ["Anyone have the wifi password?", "Lunch line is out the door already"],
+      },
       {
         title: "Keynote Q&A - anyone catch the slide link?",
         category: "micro_location",
