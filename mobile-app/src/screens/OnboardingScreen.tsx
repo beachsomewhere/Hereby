@@ -127,8 +127,8 @@ export function OnboardingScreen() {
               value={code}
               onChangeText={setCode}
               keyboardType="number-pad"
-              maxLength={6}
-              placeholder="123456"
+              maxLength={10}
+              placeholder="Code from the email"
             />
             {error && <Text style={styles.error}>{error}</Text>}
             <Pressable
