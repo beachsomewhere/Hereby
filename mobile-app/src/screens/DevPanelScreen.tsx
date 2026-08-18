@@ -19,7 +19,21 @@ export function DevPanelScreen() {
 
   const [lat, setLat] = useState(String(devSimulatedLocation?.lat ?? 37.6213));
   const [lng, setLng] = useState(String(devSimulatedLocation?.lng ?? -122.3790));
-  const [conversationIds, setConversationIds] = useState<string[]>(backend.devListConversationIds());
+  const [conversations, setConversations] = useState(backend.devListConversations());
+  const [seedingId, setSeedingId] = useState<string>();
+
+  function refreshConversations() {
+    setConversations(backend.devListConversations());
+  }
+
+  async function seedFooFightersDemo(id: string) {
+    setSeedingId(id);
+    try {
+      await backend.devSeedFooFightersDemo(id);
+    } finally {
+      setSeedingId(undefined);
+    }
+  }
 
   function applyLocation() {
     const parsedLat = parseFloat(lat);
@@ -49,12 +63,12 @@ export function DevPanelScreen() {
     if (!devSimulatedLocation) applyLocation();
     const center = devSimulatedLocation ?? { lat: parseFloat(lat), lng: parseFloat(lng) };
     await backend.devLoadScenario(name, center);
-    setConversationIds(backend.devListConversationIds());
+    refreshConversations();
   }
 
   async function resetAll() {
     backend.devResetAll();
-    setConversationIds([]);
+    setConversations([]);
   }
 
   return (
@@ -106,9 +120,10 @@ export function DevPanelScreen() {
         </Pressable>
       </View>
 
-      <Text style={styles.sectionTitle}>Active conversations ({conversationIds.length})</Text>
-      {conversationIds.map((id) => (
+      <Text style={styles.sectionTitle}>Active conversations ({conversations.length})</Text>
+      {conversations.map(({ id, title }) => (
         <View key={id} style={styles.convRow}>
+          <Text style={styles.convTitle}>{title}</Text>
           <Text style={styles.convId}>{id}</Text>
           <View style={styles.buttonRow}>
             <Pressable style={styles.smallButton} onPress={() => backend.devAddSyntheticParticipant(id)}>
@@ -121,6 +136,15 @@ export function DevPanelScreen() {
               <Text style={styles.smallButtonDangerText}>Expire now</Text>
             </Pressable>
           </View>
+          <Pressable
+            style={[styles.seedButton, seedingId === id && styles.seedButtonDisabled]}
+            onPress={() => seedFooFightersDemo(id)}
+            disabled={seedingId === id}
+          >
+            <Text style={styles.seedButtonText}>
+              {seedingId === id ? "Seeding 1,400 participants + threads..." : "Seed demo: 1,400 participants + topic threads"}
+            </Text>
+          </Pressable>
         </View>
       ))}
 
@@ -148,11 +172,15 @@ const styles = StyleSheet.create({
   scenarioChip: { backgroundColor: "#F1EFE8", borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12 },
   scenarioChipText: { fontSize: 12, color: "#2C2C2A" },
   convRow: { borderTopWidth: 1, borderTopColor: "#EDEBE3", paddingVertical: 10 },
+  convTitle: { fontSize: 13, fontWeight: "500", marginBottom: 2 },
   convId: { fontSize: 11, color: "#888780", marginBottom: 6, fontFamily: "Courier" },
   smallButton: { borderWidth: 1, borderColor: "#D3D1C7", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
   smallButtonText: { fontSize: 11, color: "#444441" },
   smallButtonDanger: { borderWidth: 1, borderColor: "#F09595", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
   smallButtonDangerText: { fontSize: 11, color: "#A32D2D" },
+  seedButton: { backgroundColor: "#FAEEDA", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 10, marginTop: 8, alignItems: "center" },
+  seedButtonDisabled: { opacity: 0.5 },
+  seedButtonText: { fontSize: 11, color: "#412402", fontWeight: "500" },
   resetButton: { marginTop: 24, alignItems: "center" },
   resetButtonText: { fontSize: 13, color: "#A32D2D", textDecorationLine: "underline" },
 });

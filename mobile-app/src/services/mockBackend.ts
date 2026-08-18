@@ -607,6 +607,101 @@ export async function devAddSyntheticMessage(conversationId: string, body?: stri
   await sendMessage(generalThread.id, user, body ?? "Anyone have an update?");
 }
 
+// Bulk participant seeding for demo purposes. Bypasses the full
+// joinConversation path (which notifies on every call) - at counts in the
+// hundreds/thousands that would mean that many redundant re-renders, so this
+// sets participant records directly and notifies once at the end instead.
+// Jittering within 0.6x the radius (same bound devAddSyntheticParticipant
+// uses) makes "inside" a safe assumption without an eligibility check per
+// participant.
+export async function devSeedParticipants(conversationId: string, count: number): Promise<void> {
+  const conv = conversations.get(conversationId);
+  const convParticipants = participants.get(conversationId);
+  if (!conv || !convParticipants) return;
+  for (let i = 0; i < count; i++) {
+    const user = await createUser();
+    convParticipants.set(user.id, {
+      userId: user.id,
+      state: "inside",
+      joinedAt: nowIso(),
+      graceStartedAt: undefined,
+    });
+  }
+  recomputeParticipantCount(conversationId);
+  notifyMap();
+  notifyConversation(conversationId);
+}
+
+const FOO_FIGHTERS_THREADS: { title: string; messages: string[] }[] = [
+  {
+    title: "🚗 Parking / Traffic",
+    messages: [
+      "Prairie Ave lot is already half full, get here early",
+      "Lot C is closed for VIP tonight, use Lot D instead",
+    ],
+  },
+  {
+    title: "🎸 Set Times",
+    messages: ["Doors at 5:30, opener at 7, Foo Fighters at 8:45", "Looks like no opener tonight, just FF at 8"],
+  },
+  {
+    title: "🎟️ Venue Questions",
+    messages: [
+      "Will call is at the north box office, not the main gate",
+      "Bag policy is clear bags only, they're checking hard tonight",
+    ],
+  },
+  {
+    title: "🍺 Food & Drinks",
+    messages: [
+      "Beer lines on the club level are way shorter right now",
+      "Loaded fries stand by section 120 is open, no line yet",
+    ],
+  },
+  {
+    title: "🚕 Rideshare",
+    messages: [
+      "Uber/Lyft pickup moved to Lot J, not the main entrance",
+      "Surge already at 2.5x - might be faster to walk to Lot P",
+    ],
+  },
+  {
+    title: "🛍️ Merch",
+    messages: [
+      "Merch tent by gate 3 still has tour shirts, gate 1 sold out of mediums",
+      "They're taking Apple Pay at the merch stands now, not just cash",
+    ],
+  },
+];
+
+async function seedThreadMessages(conversationId: string, threadId: string, lines: string[]): Promise<void> {
+  const conv = conversations.get(conversationId);
+  if (!conv) return;
+  for (const line of lines) {
+    const user = await createUser();
+    await joinConversation(user.id, conversationId, conv.location);
+    await sendMessage(threadId, user, line);
+  }
+}
+
+// One-off demo seeding for an already-created conversation: a large
+// participant count plus a set of topic threads (parking, set times, etc.),
+// each pre-seeded with a couple of realistic messages - built for taking
+// representative screenshots of a big, active event chat.
+export async function devSeedFooFightersDemo(conversationId: string): Promise<void> {
+  await devSeedParticipants(conversationId, 1400);
+
+  const generalThread = getConversationThreads(conversationId).find((t) => t.isGeneral);
+  if (generalThread) {
+    await seedThreadMessages(conversationId, generalThread.id, ["Anyone else here early?", "This crowd is huge tonight"]);
+  }
+
+  for (const { title, messages } of FOO_FIGHTERS_THREADS) {
+    const thread = await createThread(conversationId, title, "seed");
+    await seedThreadMessages(conversationId, thread.id, messages);
+  }
+}
+
 export async function devExpireConversation(conversationId: string): Promise<void> {
   const conv = conversations.get(conversationId);
   if (!conv) return;
@@ -657,4 +752,8 @@ export function devResetAll(): void {
 
 export function devListConversationIds(): string[] {
   return Array.from(conversations.keys());
+}
+
+export function devListConversations(): { id: string; title: string }[] {
+  return Array.from(conversations.values()).map((c) => ({ id: c.id, title: c.title }));
 }
