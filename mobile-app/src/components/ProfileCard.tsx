@@ -20,7 +20,7 @@ interface Props {
 export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport }: Props) {
   if (!user) return null;
   const accountAgeDays = Math.max(0, Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000));
-  const ageLabel = accountAgeDays < 1 ? "New today" : accountAgeDays < 30 ? `${accountAgeDays}d on Nearby` : `${Math.floor(accountAgeDays / 30)}mo on Nearby`;
+  const ageLabel = accountAgeDays < 1 ? "New today" : accountAgeDays < 30 ? `${accountAgeDays}d on Hereby` : `${Math.floor(accountAgeDays / 30)}mo on Hereby`;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>

@@ -90,7 +90,7 @@ export function OnboardingScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.content}>
-        <Text style={styles.title}>Nearby</Text>
+        <Text style={styles.title}>Hereby</Text>
         <Text style={styles.subtitle}>See what people around you are talking about, right now.</Text>
 
         {step === "email" && (

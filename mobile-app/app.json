@@ -1,20 +1,25 @@
 {
   "expo": {
-    "name": "Nearby",
-    "slug": "nearby-mobile",
+    "name": "Hereby",
+    "slug": "hereby-mobile",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": false,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Nearby shows conversations happening around your current location. Your exact location is never shown to other users.",
+        "NSLocationWhenInUseUsageDescription": "Hereby shows conversations happening around your current location. Your exact location is never shown to other users.",
         "UIBackgroundModes": ["location"]
       }
     },
     "android": {
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FF5A3C"
+      }
     },
     "extra": {
       "devModeAvailableByDefault": true

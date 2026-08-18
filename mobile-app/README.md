@@ -1,4 +1,4 @@
-# Nearby - mobile prototype
+# Hereby - mobile prototype
 
 Temporary, location-based group conversations. The map is the social network: users see and join conversations happening around them, not other people.
 

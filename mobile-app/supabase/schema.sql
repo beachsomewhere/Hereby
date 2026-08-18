@@ -1,4 +1,4 @@
--- Nearby - MVP schema (Postgres + PostGIS, Supabase)
+-- Hereby - MVP schema (Postgres + PostGIS, Supabase)
 -- Mirrors src/services/types.ts and Phase 1 strategy doc section 15/16.
 --
 -- Design rules encoded here on purpose:
