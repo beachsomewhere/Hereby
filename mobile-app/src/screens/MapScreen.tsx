@@ -1,18 +1,27 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import MapView, { Marker, Region } from "react-native-maps";
+import MapView, { Circle, Marker, Region } from "react-native-maps";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAppStore, effectiveLocation } from "../state/useAppStore";
 import * as backend from "../services/mockBackend";
-import { ConversationSummary, GeoPoint } from "../services/types";
-import { BubbleMarker } from "../components/BubbleMarker";
+import { ConversationCategory, ConversationSummary, GeoPoint } from "../services/types";
+import { BubbleMarker, HEAT_COLORS } from "../components/BubbleMarker";
 import { ClusterMarker } from "../components/ClusterMarker";
 import { ConversationPreviewSheet } from "../components/ConversationPreviewSheet";
 import { CreateConversationSheet } from "../components/CreateConversationSheet";
-import { bboxFromRegion, buildClusterIndex, dominantVenueLabel, findWiderConversation, isVisibleAtZoom, zoomFromRegion } from "../services/clustering";
-import { computeRenderSize } from "../services/activityScore";
-import { distanceMeters } from "../services/geo";
+import {
+  bboxFromRegion,
+  buildClusterIndex,
+  categoryForZoom,
+  deltaForZoom,
+  dominantVenueLabel,
+  isVisibleAtZoom,
+  supersedeBroaderConversations,
+  ZOOM_VISIBILITY,
+  zoomFromRegion,
+} from "../services/clustering";
+import { computeRenderSize, heatLevel } from "../services/activityScore";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Map">;
 
@@ -39,10 +48,11 @@ export function MapScreen({ navigation }: Props) {
   const [previewNearby, setPreviewNearby] = useState<ConversationSummary[]>([]);
   const [createVisible, setCreateVisible] = useState(false);
   const [createLocation, setCreateLocation] = useState<GeoPoint>();
+  const [createCategory, setCreateCategory] = useState<ConversationCategory>("micro_location");
 
   const refresh = useCallback(async () => {
     const center: GeoPoint = location ?? { lat: region.latitude, lng: region.longitude };
-    const results = await backend.getVisibleConversations(center, { radiusM: 4000 });
+    const results = await backend.getVisibleConversations(center);
     setConversations(results);
   }, [location, region.latitude, region.longitude]);
 
@@ -56,37 +66,59 @@ export function MapScreen({ navigation }: Props) {
     };
   }, [refresh]);
 
+  // Recenter whenever location changes (app load, dev-mode teleport, real
+  // movement). If nothing would be visible at the zoom we're already at -
+  // e.g. the only conversation here is a specific gate chat with no
+  // broader venue/area one covering it - zoom in enough to reveal the
+  // nearest available one instead of landing on an apparently-empty map.
+  // Only kicks in when the current zoom shows nothing, so it never fights
+  // deliberate manual zooming once something's already in view.
   useEffect(() => {
     if (!location) return;
-    setRegion((r) => {
-      const next = { ...r, latitude: location.lat, longitude: location.lng };
-      mapRef.current?.animateToRegion(next, 500);
-      return next;
-    });
+    (async () => {
+      const results = await backend.getVisibleConversations(location);
+      const currentZoom = zoomFromRegion(region.longitudeDelta);
+      const alreadyVisible = results.some((c) => ZOOM_VISIBILITY[c.category] <= currentZoom);
+      const nearestThreshold =
+        results.length > 0 && !alreadyVisible ? Math.min(...results.map((c) => ZOOM_VISIBILITY[c.category])) : undefined;
+      setRegion((r) => {
+        const next = {
+          ...r,
+          latitude: location.lat,
+          longitude: location.lng,
+          ...(nearestThreshold !== undefined
+            ? { latitudeDelta: deltaForZoom(nearestThreshold), longitudeDelta: deltaForZoom(nearestThreshold) }
+            : {}),
+        };
+        mapRef.current?.animateToRegion(next, 500);
+        return next;
+      });
+    })();
   }, [location?.lat, location?.lng]);
 
   const zoom = zoomFromRegion(region.longitudeDelta);
 
-  const visibleConversations = useMemo(
-    () => conversations.filter((c) => isVisibleAtZoom(c.category, zoom)),
-    [conversations, zoom]
-  );
+  // Zoom-visible, then superseded: a broader conversation (e.g. "airport
+  // wide") only shows up until something more specific covering the same
+  // spot is also zoom-visible, at which point it transforms into that one
+  // instead of showing alongside it. Zooming back out drops the more
+  // specific one out of the zoom-visible set again, so the broader one
+  // naturally reappears.
+  const visibleConversations = useMemo(() => {
+    const zoomVisible = conversations.filter((c) => isVisibleAtZoom(c.category, zoom));
+    return supersedeBroaderConversations(zoomVisible);
+  }, [conversations, zoom]);
 
-  // Opens the preview sheet for a conversation, alongside any nearby ones
-  // worth surfacing as "more specific chats to zoom in for" - either
-  // explicitly passed in (e.g. the members of a cluster whose "own chat"
-  // this is) or, failing that, whatever's nearby but currently hidden by
-  // zoom.
-  function selectConversation(conversation: ConversationSummary, extraNearby: ConversationSummary[] = []) {
+  // Opens the preview sheet for a conversation, alongside any nested ones
+  // worth surfacing as "more specific chats to zoom in for" - whatever's
+  // still hidden by zoom. No extra distance check needed here -
+  // `conversations` is already eligibility-gated (see
+  // getVisibleConversations), so everything in it is already something the
+  // user's own pin is inside.
+  function selectConversation(conversation: ConversationSummary) {
     setSelected(conversation);
-    const zoomHidden = conversations.filter(
-      (c) =>
-        c.id !== conversation.id &&
-        !extraNearby.some((e) => e.id === c.id) &&
-        !isVisibleAtZoom(c.category, zoom) &&
-        distanceMeters(c.location, conversation.location) <= conversation.discoveryRadiusM
-    );
-    setPreviewNearby([...extraNearby, ...zoomHidden]);
+    const zoomHidden = conversations.filter((c) => c.id !== conversation.id && !isVisibleAtZoom(c.category, zoom));
+    setPreviewNearby(zoomHidden);
   }
 
   const clusterIndex = useMemo(() => {
@@ -122,6 +154,13 @@ export function MapScreen({ navigation }: Props) {
     setCreateVisible(true);
   }
 
+  function handleRecenter() {
+    if (!location) return;
+    const next = { ...region, latitude: location.lat, longitude: location.lng };
+    setRegion(next);
+    mapRef.current?.animateToRegion(next, 400);
+  }
+
   async function handleJoin(conversation: ConversationSummary) {
     if (!currentUser || !location) return;
     setSelected(undefined);
@@ -150,10 +189,42 @@ export function MapScreen({ navigation }: Props) {
           />
         )}
 
+        {createVisible && createLocation && (
+          <Circle
+            center={{ latitude: createLocation.lat, longitude: createLocation.lng }}
+            radius={backend.RADII[createCategory].participation}
+            strokeColor="rgba(44,44,42,0.5)"
+            fillColor="rgba(44,44,42,0.08)"
+          />
+        )}
+
+        {clusterItems.map((item) => {
+          const props = item.properties as any;
+          if (props.cluster) return null;
+          const conversation: ConversationSummary = props.conversation;
+          const colors = HEAT_COLORS[heatLevel(conversation.activityScore)];
+          return (
+            <Circle
+              key={`radius-${conversation.id}`}
+              center={{ latitude: conversation.location.lat, longitude: conversation.location.lng }}
+              radius={conversation.participationRadiusM}
+              strokeColor={`${colors.border}B3`}
+              fillColor={`${colors.border}26`}
+              strokeWidth={1.5}
+            />
+          );
+        })}
+
         {clusterItems.map((item) => {
           const [lng, lat] = item.geometry.coordinates;
           const props = item.properties as any;
           if (props.cluster) {
+            // Every conversation here has already survived
+            // supersedeBroaderConversations, so a cluster is always genuine
+            // siblings (no member covers the others) - just several
+            // same-ish-tier chats rendering close together. Tapping zooms
+            // in rather than opening one, since it isn't any single one of
+            // them.
             const leaves = (clusterIndex?.getLeaves(props.cluster_id, Infinity) ?? []).map(
               (leaf) => (leaf.properties as any).conversation as ConversationSummary
             );
@@ -166,20 +237,15 @@ export function MapScreen({ navigation }: Props) {
                 label={dominantVenueLabel(leaves)}
                 activityScore={aggregateScore}
                 renderSize={computeRenderSize(aggregateScore)}
-                onPress={() => {
-                  const wider = findWiderConversation(leaves, { lat, lng }, conversations);
-                  if (wider) {
-                    selectConversation(wider, leaves);
-                    return;
-                  }
+                onPress={() =>
                   setRegion((r) => ({
                     ...r,
                     latitude: lat,
                     longitude: lng,
                     latitudeDelta: r.latitudeDelta / 3,
                     longitudeDelta: r.longitudeDelta / 3,
-                  }));
-                }}
+                  }))
+                }
               />
             );
           }
@@ -208,6 +274,12 @@ export function MapScreen({ navigation }: Props) {
         </Pressable>
       </View>
 
+      {location && (
+        <Pressable style={styles.recenterButton} onPress={handleRecenter}>
+          <Text style={styles.recenterButtonText}>⌖</Text>
+        </Pressable>
+      )}
+
       <Pressable style={styles.startChatButton} onPress={handleStartChatPress}>
         <Text style={styles.startChatButtonText}>Start chat</Text>
       </Pressable>
@@ -226,6 +298,8 @@ export function MapScreen({ navigation }: Props) {
         visible={createVisible}
         location={createLocation}
         userId={currentUser?.id}
+        defaultCategory={categoryForZoom(zoom)}
+        onCategoryChange={setCreateCategory}
         onClose={() => setCreateVisible(false)}
         onCreated={(conv) => {
           setCreateVisible(false);
@@ -255,6 +329,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
   },
   startChatButtonText: { color: "white", fontSize: 15, fontWeight: "500" },
+  recenterButton: {
+    position: "absolute",
+    bottom: 36,
+    right: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "white",
+    borderWidth: 1,
+    borderColor: "#D3D1C7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  recenterButtonText: { fontSize: 22, color: "#2C2C2A" },
   emptyState: { position: "absolute", top: 100, left: 24, right: 24, alignItems: "center" },
   emptyStateText: { fontSize: 13, color: "#5F5E5A", textAlign: "center", backgroundColor: "rgba(255,255,255,0.9)", padding: 12, borderRadius: 10 },
 });

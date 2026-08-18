@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useHeaderHeight } from "@react-navigation/elements";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAppStore, effectiveLocation } from "../state/useAppStore";
 import * as backend from "../services/mockBackend";
@@ -22,6 +23,10 @@ import { CreateThreadSheet } from "../components/CreateThreadSheet";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Conversation">;
 
+// useHeaderHeight() alone still leaves the input row a few points under the
+// keyboard on iOS - this closes that gap.
+const KEYBOARD_OFFSET_PADDING = 10;
+
 const STATE_BANNER: Record<ParticipantState, string | undefined> = {
   inside: undefined,
   grace: "You've stepped outside the area - you can still post for a little while.",
@@ -31,6 +36,7 @@ const STATE_BANNER: Record<ParticipantState, string | undefined> = {
 
 export function ConversationScreen({ route, navigation }: Props) {
   const { conversationId } = route.params;
+  const headerHeight = useHeaderHeight();
   const currentUser = useAppStore((s) => s.currentUser);
   const location = useAppStore(effectiveLocation);
   const blockedUserIds = useAppStore((s) => s.blockedUserIds);
@@ -44,8 +50,13 @@ export function ConversationScreen({ route, navigation }: Props) {
   const [draft, setDraft] = useState("");
   const [replyTo, setReplyTo] = useState<Message>();
   const [profileUser, setProfileUser] = useState<User>();
-  const [confirmedCounts, setConfirmedCounts] = useState<Record<string, number>>({});
+  const [voteState, setVoteState] = useState<Record<string, { upvotes: number; downvotes: number; myVote?: ConfirmationType }>>({});
   const [createThreadVisible, setCreateThreadVisible] = useState(false);
+  // Per-thread "read up to" watermark, client-side only. Seeded to a
+  // thread's own lastActivityAt the moment it's first seen in the list, so
+  // pre-existing history never lights up a chip - only activity that lands
+  // after that point does.
+  const [lastSeenAt, setLastSeenAt] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async () => {
     const [conv, threadList] = await Promise.all([
@@ -76,11 +87,46 @@ export function ConversationScreen({ route, navigation }: Props) {
     };
   }, [refresh, conversationId]);
 
+  useEffect(() => {
+    setLastSeenAt((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      threads.forEach((t) => {
+        if (!(t.id in next)) {
+          next[t.id] = t.lastActivityAt;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [threads]);
+
   const refreshMessages = useCallback(async () => {
     if (!activeThreadId) return;
-    const msgs = await backend.getMessages(activeThreadId);
-    setMessages(msgs.filter((m) => !m.deletedAt));
-  }, [activeThreadId]);
+    const msgs = (await backend.getMessages(activeThreadId)).filter((m) => !m.deletedAt);
+    setMessages(msgs);
+
+    // Viewing a thread keeps it caught-up in real time, so its own chip
+    // never lights up while it's the one on screen.
+    const latest = msgs[msgs.length - 1]?.createdAt;
+    if (latest) {
+      setLastSeenAt((prev) => (prev[activeThreadId] && prev[activeThreadId] >= latest ? prev : { ...prev, [activeThreadId]: latest }));
+    }
+
+    const votes = await Promise.all(msgs.map((m) => backend.getConfirmations(m.id)));
+    setVoteState((prev) => {
+      const next = { ...prev };
+      msgs.forEach((m, i) => {
+        const confirmations = votes[i];
+        next[m.id] = {
+          upvotes: confirmations.filter((c) => c.type === "upvote").length,
+          downvotes: confirmations.filter((c) => c.type === "downvote").length,
+          myVote: confirmations.find((c) => c.userId === currentUser?.id)?.type,
+        };
+      });
+      return next;
+    });
+  }, [activeThreadId, currentUser]);
 
   useEffect(() => {
     if (!activeThreadId) return;
@@ -100,10 +146,10 @@ export function ConversationScreen({ route, navigation }: Props) {
     setReplyTo(undefined);
   }
 
-  async function handleConfirm(message: Message, type: ConfirmationType) {
+  async function handleVote(message: Message, type: ConfirmationType) {
     if (!currentUser) return;
-    const { confirmedByCount } = await backend.confirmMessage(message.id, currentUser.id, type);
-    setConfirmedCounts((prev) => ({ ...prev, [message.id]: confirmedByCount }));
+    const { upvotes, downvotes, myVote } = await backend.voteMessage(message.id, currentUser.id, type);
+    setVoteState((prev) => ({ ...prev, [message.id]: { upvotes, downvotes, myVote } }));
   }
 
   function handleReport(message: Message) {
@@ -126,8 +172,24 @@ export function ConversationScreen({ route, navigation }: Props) {
   const banner = STATE_BANNER[participantState];
   const canPost = participantState === "inside" || participantState === "grace";
 
+  function hasUnread(thread: Thread) {
+    if (thread.id === activeThreadId) return false;
+    const seen = lastSeenAt[thread.id];
+    return !!seen && thread.lastActivityAt > seen;
+  }
+
+  const messagesById = useMemo(() => {
+    const map: Record<string, Message> = {};
+    messages.forEach((m) => (map[m.id] = m));
+    return map;
+  }, [messages]);
+
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={Platform.OS === "ios" ? headerHeight + KEYBOARD_OFFSET_PADDING : 0}
+    >
       {banner && (
         <View style={styles.banner}>
           <Text style={styles.bannerText}>{banner}</Text>
@@ -140,17 +202,30 @@ export function ConversationScreen({ route, navigation }: Props) {
         style={styles.threadRow}
         contentContainerStyle={styles.threadRowContent}
       >
-        {threads.map((t) => (
-          <Pressable
-            key={t.id}
-            onPress={() => setActiveThreadId(t.id)}
-            style={[styles.threadChip, activeThreadId === t.id && styles.threadChipActive]}
-          >
-            <Text style={[styles.threadChipText, activeThreadId === t.id && styles.threadChipTextActive]}>
-              {t.title}
-            </Text>
-          </Pressable>
-        ))}
+        {threads.map((t) => {
+          const unread = hasUnread(t);
+          return (
+            <Pressable
+              key={t.id}
+              onPress={() => setActiveThreadId(t.id)}
+              style={[
+                styles.threadChip,
+                unread && styles.threadChipUnread,
+                activeThreadId === t.id && styles.threadChipActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.threadChipText,
+                  unread && styles.threadChipTextUnread,
+                  activeThreadId === t.id && styles.threadChipTextActive,
+                ]}
+              >
+                {t.title}
+              </Text>
+            </Pressable>
+          );
+        })}
         {canPost && (
           <Pressable onPress={() => setCreateThreadVisible(true)} style={styles.threadChipAdd}>
             <Text style={styles.threadChipAddText}>+ New thread</Text>
@@ -165,8 +240,11 @@ export function ConversationScreen({ route, navigation }: Props) {
           <MessageBubble
             message={item}
             isOwn={item.userId === currentUser?.id}
-            confirmedCount={confirmedCounts[item.id]}
-            onConfirm={(type) => handleConfirm(item, type)}
+            replyToMessage={item.replyToId ? messagesById[item.replyToId] : undefined}
+            upvotes={voteState[item.id]?.upvotes}
+            downvotes={voteState[item.id]?.downvotes}
+            myVote={voteState[item.id]?.myVote}
+            onVote={(type) => handleVote(item, type)}
             onReport={() => handleReport(item)}
             onReply={() => setReplyTo(item)}
             onOpenProfile={() => openProfile(item.userId, item.username)}
@@ -203,6 +281,7 @@ export function ConversationScreen({ route, navigation }: Props) {
       <ProfileCard
         user={profileUser}
         visible={!!profileUser}
+        isSelf={!!profileUser && profileUser.id === currentUser?.id}
         onClose={() => setProfileUser(undefined)}
         onBlock={() => {
           if (profileUser) blockUserInStore(profileUser.id);
@@ -240,8 +319,10 @@ const styles = StyleSheet.create({
   threadRow: { flexGrow: 0, borderBottomWidth: 1, borderBottomColor: "#EDEBE3" },
   threadRowContent: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingVertical: 10 },
   threadChip: { borderWidth: 1, borderColor: "#D3D1C7", borderRadius: 999, paddingVertical: 6, paddingHorizontal: 12 },
+  threadChipUnread: { backgroundColor: "#FAEEDA", borderColor: "#EF9F27" },
   threadChipActive: { backgroundColor: "#2C2C2A", borderColor: "#2C2C2A" },
   threadChipText: { fontSize: 12, color: "#444441", fontWeight: "500" },
+  threadChipTextUnread: { color: "#412402", fontWeight: "600" },
   threadChipTextActive: { color: "white" },
   threadChipAdd: { borderWidth: 1, borderColor: "#D3D1C7", borderStyle: "dashed", borderRadius: 999, paddingVertical: 6, paddingHorizontal: 12 },
   threadChipAddText: { fontSize: 12, color: "#5F5E5A" },

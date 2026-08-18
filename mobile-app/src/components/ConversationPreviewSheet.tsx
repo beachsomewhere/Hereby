@@ -64,11 +64,16 @@ export function ConversationPreviewSheet({ conversation, hiddenNearby = [], onCl
         {hiddenNearby.length > 0 && (
           <View style={styles.nearbyBox}>
             <Text style={styles.nearbyTitle}>
-              {hiddenNearby.length} more specific {hiddenNearby.length === 1 ? "chat" : "chats"} nearby - zoom in to see:
+              {hiddenNearby.length} more specific {hiddenNearby.length === 1 ? "chat" : "chats"} nearby:
             </Text>
-            <Text style={styles.nearbyList} numberOfLines={3}>
-              {hiddenNearby.map((c) => c.title).join(" · ")}
-            </Text>
+            {hiddenNearby.map((c) => (
+              <Pressable key={c.id} style={styles.nearbyRow} onPress={() => onJoin(c)}>
+                <Text style={styles.nearbyRowTitle} numberOfLines={1}>
+                  {c.title}
+                </Text>
+                <Text style={styles.nearbyRowMeta}>{c.participantCount} participants · tap to join</Text>
+              </Pressable>
+            ))}
           </View>
         )}
 
@@ -106,8 +111,10 @@ const styles = StyleSheet.create({
   preview: { fontSize: 14, color: "#444441", marginBottom: 20 },
   previewMuted: { fontSize: 14, color: "#888780", fontStyle: "italic", marginBottom: 20 },
   nearbyBox: { backgroundColor: "#F1EFE8", borderRadius: 10, padding: 12, marginBottom: 20 },
-  nearbyTitle: { fontSize: 12, fontWeight: "500", color: "#444441", marginBottom: 4 },
-  nearbyList: { fontSize: 12, color: "#5F5E5A" },
+  nearbyTitle: { fontSize: 12, fontWeight: "500", color: "#444441", marginBottom: 6 },
+  nearbyRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#E3E1D8" },
+  nearbyRowTitle: { fontSize: 13, fontWeight: "500", color: "#2C2C2A" },
+  nearbyRowMeta: { fontSize: 11, color: "#888780", marginTop: 2 },
   joinButton: { backgroundColor: "#2C2C2A", borderRadius: 10, paddingVertical: 14, alignItems: "center" },
   joinButtonText: { color: "white", fontSize: 15, fontWeight: "500" },
 });

@@ -24,6 +24,9 @@ const MIN_RENDER_SIZE = 30;
 const MAX_RENDER_SIZE = 78;
 const RENDER_K = 16;
 
+const CARD_MIN_WIDTH = 96;
+const CARD_MAX_WIDTH = 168;
+
 export function minutesBetween(aIso: string, bIso: string): number {
   return Math.max(0, (new Date(bIso).getTime() - new Date(aIso).getTime()) / 60000);
 }
@@ -57,6 +60,17 @@ export function computeRenderSize(
     distanceFromUserM !== undefined ? Math.max(0, 1 - distanceFromUserM / 3000) * 6 : 0;
   const size = MIN_RENDER_SIZE + RENDER_K * Math.log(1 + score) + proximityBoost;
   return Math.min(MAX_RENDER_SIZE, Math.max(MIN_RENDER_SIZE, size));
+}
+
+/**
+ * Maps a render size (see computeRenderSize) to a card width for the map
+ * markers. Markers are info cards, not plain dots - text needs to stay at a
+ * fixed, readable size regardless of activity, so activity is expressed as
+ * card width instead of font size or a shrinking circle.
+ */
+export function computeCardWidth(renderSize: number): number {
+  const t = (renderSize - MIN_RENDER_SIZE) / (MAX_RENDER_SIZE - MIN_RENDER_SIZE);
+  return CARD_MIN_WIDTH + t * (CARD_MAX_WIDTH - CARD_MIN_WIDTH);
 }
 
 export function heatLevel(score: number): "new" | "active" | "hot" {

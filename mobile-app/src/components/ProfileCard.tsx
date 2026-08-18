@@ -5,6 +5,7 @@ import { User } from "../services/types";
 interface Props {
   user?: User;
   visible: boolean;
+  isSelf?: boolean;
   onClose: () => void;
   onBlock: () => void;
   onReport: () => void;
@@ -16,7 +17,7 @@ interface Props {
  * No feed, no history, no location, no real name - and there is nowhere
  * else in the app to see more about a user than this.
  */
-export function ProfileCard({ user, visible, onClose, onBlock, onReport }: Props) {
+export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport }: Props) {
   if (!user) return null;
   const accountAgeDays = Math.max(0, Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000));
   const ageLabel = accountAgeDays < 1 ? "New today" : accountAgeDays < 30 ? `${accountAgeDays}d on Nearby` : `${Math.floor(accountAgeDays / 30)}mo on Nearby`;
@@ -24,7 +25,7 @@ export function ProfileCard({ user, visible, onClose, onBlock, onReport }: Props
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} />
-      <View style={styles.cardWrap}>
+      <View style={styles.cardWrap} pointerEvents="box-none">
         <View style={styles.card}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{user.username.slice(0, 2).toUpperCase()}</Text>
@@ -49,14 +50,20 @@ export function ProfileCard({ user, visible, onClose, onBlock, onReport }: Props
             </View>
           )}
 
-          <View style={styles.actionsRow}>
-            <Pressable style={styles.actionButton} onPress={onBlock}>
-              <Text style={styles.actionButtonText}>Block</Text>
-            </Pressable>
-            <Pressable style={styles.actionButtonDanger} onPress={onReport}>
-              <Text style={styles.actionButtonDangerText}>Report</Text>
-            </Pressable>
-          </View>
+          {!isSelf && (
+            <View style={styles.actionsRow}>
+              <Pressable style={styles.actionButton} onPress={onBlock}>
+                <Text style={styles.actionButtonText}>Block</Text>
+              </Pressable>
+              <Pressable style={styles.actionButtonDanger} onPress={onReport}>
+                <Text style={styles.actionButtonDangerText}>Report</Text>
+              </Pressable>
+            </View>
+          )}
+
+          <Pressable onPress={onClose} hitSlop={8}>
+            <Text style={styles.closeText}>Close</Text>
+          </Pressable>
         </View>
       </View>
     </Modal>
@@ -79,6 +86,7 @@ const styles = StyleSheet.create({
   badgeChip: { backgroundColor: "#F1EFE8", borderRadius: 999, paddingVertical: 4, paddingHorizontal: 10 },
   badgeChipText: { fontSize: 11, color: "#444441" },
   actionsRow: { flexDirection: "row", gap: 10, marginTop: 18 },
+  closeText: { fontSize: 13, color: "#888780", marginTop: 14 },
   actionButton: { borderWidth: 1, borderColor: "#D3D1C7", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16 },
   actionButtonText: { fontSize: 13, color: "#444441" },
   actionButtonDanger: { borderWidth: 1, borderColor: "#F09595", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16 },

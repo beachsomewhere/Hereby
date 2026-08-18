@@ -31,6 +31,7 @@ import {
 import { distanceMeters, snapToGrid, jitter } from "./geo";
 import { computeActivityScore, computeRenderSize, minutesBetween, nextStatus } from "./activityScore";
 import { SCENARIOS, ScenarioName } from "../dev/scenarios";
+import { ZOOM_VISIBILITY } from "./clustering";
 
 // ---------------------------------------------------------------------------
 // In-memory "clock" - lets dev mode fast-forward time without waiting.
@@ -51,7 +52,7 @@ export function advanceClockMinutes(minutes: number) {
 // ---------------------------------------------------------------------------
 // Radii + expiration defaults, per Phase 1 sections 9 and 10.
 // ---------------------------------------------------------------------------
-const RADII: Record<ConversationCategory, { discovery: number; participation: number; graceMin: number; ttlHours: number }> = {
+export const RADII: Record<ConversationCategory, { discovery: number; participation: number; graceMin: number; ttlHours: number }> = {
   micro_location: { discovery: 400, participation: 60, graceMin: 12, ttlHours: 5 },
   venue: { discovery: 1200, participation: 250, graceMin: 25, ttlHours: 6 },
   area: { discovery: 3000, participation: 800, graceMin: 35, ttlHours: 10 },
@@ -139,6 +140,21 @@ export function generatePseudonym(): string {
   return `${a}${n}${num}`;
 }
 
+// Levels/badges should be "few and legible" per Phase 1 section 11 - 5
+// levels, driven only by helpfulPoints (never raw message/join counts, to
+// avoid rewarding volume over quality).
+const LEVEL_THRESHOLDS = [0, 5, 15, 40, 100];
+export function computeLevel(helpfulPoints: number): number {
+  let level = 1;
+  for (let i = LEVEL_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (helpfulPoints >= LEVEL_THRESHOLDS[i]) {
+      level = i + 1;
+      break;
+    }
+  }
+  return level;
+}
+
 export async function createUser(username?: string): Promise<User> {
   const id = nextId("user");
   const user: User = {
@@ -152,6 +168,14 @@ export async function createUser(username?: string): Promise<User> {
   };
   users.set(id, user);
   return user;
+}
+
+// Registers a user created by a real backend (see authService.ts) into the
+// mock's own user store, so mock-backed functions that look authors up here
+// - voteMessage bumping helpfulPoints/level, most notably - keep working for
+// a real user mixed in with the mock's synthetic ones.
+export function registerUser(user: User): void {
+  users.set(user.id, user);
 }
 
 export async function getUser(userId: string): Promise<User | undefined> {
@@ -200,15 +224,16 @@ function toSummary(conv: Conversation, userLocation?: GeoPoint): ConversationSum
 // ---------------------------------------------------------------------------
 // Map queries
 // ---------------------------------------------------------------------------
-export async function getVisibleConversations(
-  userLocation: GeoPoint,
-  opts: { radiusM?: number } = {}
-): Promise<ConversationSummary[]> {
+// Visibility is eligibility-gated, not merely proximity-gated: a conversation
+// only appears for a location if that location would register as "inside"
+// it (see checkEligibility) - same radius, same rule, at every category
+// tier. There is no separate "discovery radius" that lets you see a chat
+// exists before you're actually within it.
+export async function getVisibleConversations(userLocation: GeoPoint): Promise<ConversationSummary[]> {
   recomputeAll();
-  const radius = opts.radiusM ?? 3000;
   return Array.from(conversations.values())
     .filter((c) => c.status !== "archived" && c.status !== "deleted")
-    .filter((c) => distanceMeters(c.location, userLocation) <= Math.max(radius, c.discoveryRadiusM))
+    .filter((c) => distanceMeters(c.location, userLocation) <= c.participationRadiusM)
     .map((c) => toSummary(c, userLocation))
     .sort((a, b) => b.activityScore - a.activityScore);
 }
@@ -248,6 +273,26 @@ export async function suggestDuplicates(
     .sort((a, b) => b.overlap - a.overlap)
     .slice(0, 3)
     .map((x) => toSummary(x.conv, location));
+}
+
+// ---------------------------------------------------------------------------
+// Supersession warning - a new conversation at this location/category would
+// immediately become the "macro chat" (see clustering.ts's
+// supersedeBroaderConversations) for any existing, more specific
+// conversation whose location falls within its own participation radius.
+// Checked at creation time so the creator can confirm that's intended
+// before it happens.
+// ---------------------------------------------------------------------------
+export async function findConversationsToSupersede(
+  location: GeoPoint,
+  category: ConversationCategory
+): Promise<ConversationSummary[]> {
+  const radii = RADII[category];
+  return Array.from(conversations.values())
+    .filter((c) => c.status !== "archived" && c.status !== "deleted")
+    .filter((c) => ZOOM_VISIBILITY[c.category] > ZOOM_VISIBILITY[category])
+    .filter((c) => distanceMeters(c.location, location) <= radii.participation)
+    .map((c) => toSummary(c, location));
 }
 
 export async function createConversation(input: CreateConversationInput): Promise<CreateConversationResult> {
@@ -427,6 +472,7 @@ export async function sendMessage(
     threadId,
     userId: user.id,
     username: user.username,
+    authorLevel: user.level,
     body,
     createdAt: nowIso(),
     replyToId,
@@ -449,32 +495,54 @@ export async function sendMessage(
   return msg;
 }
 
-export async function confirmMessage(
+function pointsForVote(type: ConfirmationType): number {
+  return type === "upvote" ? 1 : -1;
+}
+
+/**
+ * Reddit-style up/down vote on a message - never reorders anything, only
+ * feeds the author's helpfulPoints/level (computeLevel). Any click while a
+ * vote is already active - same direction or the opposite one - just clears
+ * it back to neutral; a vote is only ever applied by clicking while neutral.
+ * That means switching your vote from up to down takes two clicks (cancel,
+ * then apply) rather than jumping straight from +1 to -1 in one - the net
+ * score always passes through 0 instead of skipping it. helpfulPoints is
+ * floored at 0 so a pile-on of downvotes can't push an author deeply
+ * negative.
+ */
+export async function voteMessage(
   messageId: string,
   userId: string,
   type: ConfirmationType
-): Promise<{ confirmedByCount: number }> {
+): Promise<{ upvotes: number; downvotes: number; myVote?: ConfirmationType }> {
   const list = confirmations.get(messageId) ?? [];
+  const existing = list.find((c) => c.userId === userId);
   const withoutUser = list.filter((c) => c.userId !== userId);
-  withoutUser.push({ messageId, userId, type });
+  const applying = !existing;
+  if (applying) {
+    withoutUser.push({ messageId, userId, type });
+  }
   confirmations.set(messageId, withoutUser);
 
-  // Reward the message author, weighted by unique confirmers, capped daily
-  // in spirit (full fraud-resistant daily cap logic is a v2 concern per the
-  // Phase 1 doc - this mock keeps the shape but not the enforcement).
   const allMessages = Array.from(messages.values()).flat();
   const msg = allMessages.find((m) => m.id === messageId);
-  if (msg && type === "helpful") {
-    const author = users.get(msg.userId);
-    if (author) author.helpfulPoints += 1;
-  }
-
-  const confirmedByCount = withoutUser.filter((c) => c.type === "confirm").length;
   if (msg) {
+    const author = users.get(msg.userId);
+    if (author) {
+      const oldDelta = existing ? pointsForVote(existing.type) : 0;
+      const newDelta = applying ? pointsForVote(type) : 0;
+      author.helpfulPoints = Math.max(0, author.helpfulPoints + newDelta - oldDelta);
+      author.level = computeLevel(author.helpfulPoints);
+    }
     notifyConversation(msg.conversationId);
     notifyThread(msg.threadId);
   }
-  return { confirmedByCount };
+
+  return {
+    upvotes: withoutUser.filter((c) => c.type === "upvote").length,
+    downvotes: withoutUser.filter((c) => c.type === "downvote").length,
+    myVote: applying ? type : undefined,
+  };
 }
 
 export async function getConfirmations(messageId: string): Promise<Confirmation[]> {

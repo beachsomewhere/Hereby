@@ -1,5 +1,5 @@
 import Supercluster from "supercluster";
-import { ConversationCategory, ConversationSummary, GeoPoint } from "./types";
+import { ConversationCategory, ConversationSummary } from "./types";
 import { distanceMeters } from "./geo";
 
 // Thin wrapper around supercluster (the same library used in Mapbox's own
@@ -42,6 +42,11 @@ export function zoomFromRegion(longitudeDelta: number): number {
   return Math.max(0, Math.min(20, Math.round(zoom)));
 }
 
+/** Inverse of zoomFromRegion - the region delta that renders at roughly the given zoom. */
+export function deltaForZoom(zoom: number): number {
+  return 360 / Math.pow(2, zoom);
+}
+
 // Minimum zoom (see zoomFromRegion, 0-20 scale) at which each category's
 // conversations become visible on the map - the wider/broader a category,
 // the further out it stays visible; more specific ones only appear once
@@ -58,30 +63,44 @@ export function isVisibleAtZoom(category: ConversationCategory, zoom: number): b
 }
 
 /**
- * A cluster of nearby conversations isn't a real, persistent entity - it's
- * just several already-real conversations that happen to render close
- * together at this zoom. If a genuinely broader conversation already
- * covers that spot (lower zoom threshold than every clustered item, and the
- * cluster's centroid falls inside its discovery radius), that's what
- * "the cluster's own chat" should be - preferring the narrowest such match.
- * Returns undefined if no covering conversation exists yet.
+ * Which category tier is "currently in view" at a given zoom - the most
+ * specific one that's actually visible right now. Used to default a newly
+ * created conversation's category to whatever you're actually looking at,
+ * so it renders immediately instead of defaulting to the narrowest tier and
+ * staying invisible until you zoom in far past where you created it.
  */
-export function findWiderConversation(
-  leaves: ConversationSummary[],
-  centroid: GeoPoint,
-  all: ConversationSummary[]
-): ConversationSummary | undefined {
-  if (leaves.length === 0) return undefined;
-  const leafIds = new Set(leaves.map((l) => l.id));
-  const leafMinThreshold = Math.min(...leaves.map((l) => ZOOM_VISIBILITY[l.category]));
-  const candidates = all.filter(
+export function categoryForZoom(zoom: number): ConversationCategory {
+  const visible = (Object.keys(ZOOM_VISIBILITY) as ConversationCategory[])
+    .filter((cat) => zoom >= ZOOM_VISIBILITY[cat])
+    .sort((a, b) => ZOOM_VISIBILITY[b] - ZOOM_VISIBILITY[a]);
+  return visible[0] ?? "area";
+}
+
+/**
+ * A broader conversation should only represent a spot until something more
+ * specific covering the same spot becomes zoom-visible too - then it should
+ * transform into that more specific one, not keep showing alongside it.
+ * Zooming back out makes the more specific one drop out of `visible` again
+ * (its own threshold no longer met), so the broader one naturally
+ * reappears. If nothing more specific exists yet, the broader one just
+ * keeps showing - "show whatever is available."
+ *
+ * Call with the already zoom-filtered set (see isVisibleAtZoom); a
+ * conversation is removed if some OTHER conversation in that same set has a
+ * strictly more specific category and falls within its participation
+ * radius (same eligibility rule as everywhere else - nesting, not mere
+ * proximity).
+ */
+export function supersedeBroaderConversations(visible: ConversationSummary[]): ConversationSummary[] {
+  return visible.filter(
     (c) =>
-      !leafIds.has(c.id) &&
-      ZOOM_VISIBILITY[c.category] < leafMinThreshold &&
-      distanceMeters(c.location, centroid) <= c.discoveryRadiusM
+      !visible.some(
+        (other) =>
+          other.id !== c.id &&
+          ZOOM_VISIBILITY[other.category] > ZOOM_VISIBILITY[c.category] &&
+          distanceMeters(c.location, other.location) <= c.participationRadiusM
+      )
   );
-  candidates.sort((a, b) => ZOOM_VISIBILITY[b.category] - ZOOM_VISIBILITY[a.category]);
-  return candidates[0];
 }
 
 /** Best-guess label for a cluster: the most common venueLabel among its points, falling back to undefined. */

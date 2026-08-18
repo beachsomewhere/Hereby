@@ -17,7 +17,10 @@ export type ConversationStatus =
 
 export type ParticipantState = "inside" | "grace" | "read_only" | "left";
 
-export type ConfirmationType = "helpful" | "confirm" | "cannot_confirm" | "incorrect";
+// Reddit-style vote on a message. Never reorders messages - it's purely a
+// signal that feeds the author's helpfulPoints/level (see
+// mockBackend.ts#voteMessage, computeLevel).
+export type ConfirmationType = "upvote" | "downvote";
 
 export type ReportTargetType = "message" | "user" | "conversation";
 
@@ -92,6 +95,10 @@ export interface Message {
   threadId: string;
   userId: string;
   username: string;
+  // Author's level at send time (see mockBackend.ts#computeLevel) - a
+  // snapshot, like username, not a live-updating value. A user leveling up
+  // doesn't retroactively relabel their older messages.
+  authorLevel: number;
   body: string;
   createdAt: string;
   replyToId?: string;

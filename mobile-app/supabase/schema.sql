@@ -133,6 +133,10 @@ create table public.messages (
   conversation_id uuid not null references public.conversations(id) on delete cascade,
   thread_id uuid not null references public.threads(id) on delete cascade,
   user_id uuid not null references public.users(id),
+  -- Snapshot of users.level at send time (see recomputeReputation) - like
+  -- username, not live-updating; a user leveling up doesn't relabel their
+  -- older messages.
+  author_level integer not null default 1,
   body text not null check (char_length(body) <= 2000),
   reply_to_id uuid references public.messages(id),
   created_at timestamptz not null default now(),
@@ -150,7 +154,10 @@ create table public.reactions (
   primary key (message_id, user_id, type)
 );
 
-create type confirmation_type as enum ('helpful', 'confirm', 'cannot_confirm', 'incorrect');
+-- Reddit-style up/down vote on a message - never reorders anything, only
+-- feeds the author's users.helpful_points / level (see
+-- mockBackend.ts#voteMessage for the mirrored logic).
+create type confirmation_type as enum ('upvote', 'downvote');
 
 create table public.confirmations (
   message_id uuid not null references public.messages(id) on delete cascade,

@@ -1,5 +1,15 @@
 import React, { useState } from "react";
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { Thread } from "../services/types";
 import * as backend from "../services/mockBackend";
 
@@ -40,6 +50,7 @@ export function CreateThreadSheet({ visible, conversationId, userId, onClose, on
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={reset}>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <Pressable style={styles.backdrop} onPress={reset} />
       <View style={styles.sheet}>
         <View style={styles.handle} />
@@ -63,11 +74,13 @@ export function CreateThreadSheet({ visible, conversationId, userId, onClose, on
           {loading ? <ActivityIndicator color="white" /> : <Text style={styles.createButtonText}>Create thread</Text>}
         </Pressable>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
   sheet: { backgroundColor: "white", borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 20, paddingBottom: 32 },
   handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: "#D3D1C7", alignSelf: "center", marginBottom: 16 },

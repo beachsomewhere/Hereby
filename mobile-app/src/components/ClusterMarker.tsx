@@ -1,7 +1,7 @@
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { Marker } from "react-native-maps";
-import { heatLevel } from "../services/activityScore";
+import { computeCardWidth, heatLevel } from "../services/activityScore";
 
 const HEAT_COLORS: Record<ReturnType<typeof heatLevel>, { bg: string; border: string; text: string }> = {
   new: { bg: "#E1F5EE", border: "#5DCAA5", text: "#04342C" },
@@ -20,55 +20,47 @@ interface Props {
 
 /**
  * A cluster of nearby conversations that are too close together to render
- * as separate bubbles at this zoom level. Styled in the same bubble
- * language as BubbleMarker (heat-colored, sized by combined activity) so it
- * reads as "one big bubble" rather than navigation chrome - see
- * services/clustering.ts. Tapping still zooms the map into the cluster
- * rather than opening a conversation, since it represents several distinct
- * topics, not one.
+ * as separate cards at this zoom level. Styled as an info card in the same
+ * language as BubbleMarker (heat-colored, width scaled by combined
+ * activity, fixed readable text) so it reads as "one big bubble" rather
+ * than navigation chrome - see services/clustering.ts. Tapping still zooms
+ * the map into the cluster rather than opening a conversation, since it
+ * represents several distinct topics, not one.
  */
 export function ClusterMarker({ coordinate, count, label, activityScore, renderSize, onPress }: Props) {
   const level = heatLevel(activityScore);
   const colors = HEAT_COLORS[level];
+  const width = computeCardWidth(renderSize);
 
   return (
     <Marker coordinate={coordinate} onPress={onPress} tracksViewChanges={false}>
-      <View
-        style={[
-          styles.bubble,
-          {
-            width: renderSize,
-            height: renderSize,
-            borderRadius: renderSize / 2,
-            backgroundColor: colors.bg,
-            borderColor: colors.border,
-          },
-        ]}
-      >
-        <Text style={[styles.label, { color: colors.text }]} numberOfLines={2}>
+      <View style={[styles.card, { width, backgroundColor: colors.bg, borderColor: colors.border }]}>
+        <Text style={[styles.title, { color: colors.text }]} numberOfLines={2}>
           {label ?? "Nearby chats"}
         </Text>
-        <Text style={[styles.count, { color: colors.text }]}>{count}</Text>
+        <Text style={[styles.meta, { color: colors.text }]} numberOfLines={1}>
+          {count} {count === 1 ? "chat" : "chats"}
+        </Text>
       </View>
     </Marker>
   );
 }
 
 const styles = StyleSheet.create({
-  bubble: {
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 4,
+  card: {
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
   },
-  label: {
-    fontSize: 10,
-    fontWeight: "500",
-    textAlign: "center",
-  },
-  count: {
-    fontSize: 9,
+  title: {
+    fontSize: 12,
     fontWeight: "600",
-    marginTop: 1,
+    lineHeight: 15,
+  },
+  meta: {
+    fontSize: 10.5,
+    marginTop: 3,
+    opacity: 0.8,
   },
 });
