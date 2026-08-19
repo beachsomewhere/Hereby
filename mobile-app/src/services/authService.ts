@@ -67,6 +67,23 @@ export async function createProfile(
     return { ok: false, error: "Not signed in - verify your email first." };
   }
 
+  // This auth account may already have a profile - e.g. local session
+  // storage was lost (Expo Go scopes it per project slug) but the account
+  // itself, tied to the verified email, still exists server-side. Use the
+  // existing profile rather than attempting a second insert, which would
+  // fail on the auth_id unique constraint and get misread as "username
+  // taken" below.
+  const { data: existing } = await supabase
+    .from("users")
+    .select()
+    .eq("auth_id", authData.user.id)
+    .maybeSingle();
+  if (existing) {
+    const user = mapRow(existing as UsersRow);
+    registerUser(user);
+    return { ok: true, user };
+  }
+
   const validation = validateUsername(username, authData.user.email ?? undefined);
   if (!validation.ok) return validation;
 

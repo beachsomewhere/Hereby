@@ -161,6 +161,24 @@ export function MapScreen({ navigation }: Props) {
     mapRef.current?.animateToRegion(next, 400);
   }
 
+  // The user is always the center of their own map - there's no reason to
+  // ever show them somewhere off to the side of it. Panning is disabled
+  // entirely (scrollEnabled=false below); this handles the other way the
+  // center can drift - pinch-zoom pivots around the touch midpoint, not
+  // necessarily the current center - by snapping back to the user's
+  // location on every gesture, keeping only the zoom level it produced.
+  function handleRegionChangeComplete(r: Region) {
+    if (!location) {
+      setRegion(r);
+      return;
+    }
+    const next = { ...r, latitude: location.lat, longitude: location.lng };
+    setRegion(next);
+    if (Math.abs(r.latitude - location.lat) > 1e-6 || Math.abs(r.longitude - location.lng) > 1e-6) {
+      mapRef.current?.animateToRegion(next, 200);
+    }
+  }
+
   async function handleJoin(conversation: ConversationSummary) {
     if (!currentUser || !location) return;
     setSelected(undefined);
@@ -175,7 +193,8 @@ export function MapScreen({ navigation }: Props) {
         ref={mapRef}
         style={StyleSheet.absoluteFill}
         initialRegion={region}
-        onRegionChangeComplete={setRegion}
+        scrollEnabled={false}
+        onRegionChangeComplete={handleRegionChangeComplete}
         onLongPress={handleLongPress}
         onPress={handleMapPress}
         showsUserLocation={!devModeEnabled}

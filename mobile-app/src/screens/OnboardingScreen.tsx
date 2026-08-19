@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import * as Location from "expo-location";
 import { useAppStore } from "../state/useAppStore";
 import * as backend from "../services/mockBackend";
@@ -88,7 +88,7 @@ export function OnboardingScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={styles.content}>
         <Text style={styles.title}>Hereby</Text>
         <Text style={styles.subtitle}>See what people around you are talking about, right now.</Text>
@@ -172,7 +172,7 @@ export function OnboardingScreen() {
           </>
         )}
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
