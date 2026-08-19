@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import MapView, { Circle, Marker, Region } from "react-native-maps";
+import * as Location from "expo-location";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAppStore, effectiveLocation } from "../state/useAppStore";
@@ -35,9 +36,26 @@ const DEFAULT_REGION: Region = {
 export function MapScreen({ navigation }: Props) {
   const currentUser = useAppStore((s) => s.currentUser);
   const location = useAppStore(effectiveLocation);
+  const userLocation = useAppStore((s) => s.userLocation);
+  const setUserLocation = useAppStore((s) => s.setUserLocation);
   const devModeEnabled = useAppStore((s) => s.devModeEnabled);
   const devSimulatedLocation = useAppStore((s) => s.devSimulatedLocation);
   const setDevSimulatedLocation = useAppStore((s) => s.setDevSimulatedLocation);
+
+  // Real GPS is otherwise only ever fetched once, during onboarding - if
+  // that permission request didn't succeed (denied, dismissed, a transient
+  // failure), there'd be no location for the rest of the session and no way
+  // to recover short of restarting. Retry here so landing on the map
+  // without one isn't a dead end.
+  useEffect(() => {
+    if (userLocation || devModeEnabled) return;
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
+      const pos = await Location.getCurrentPositionAsync({});
+      setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    })();
+  }, [userLocation, devModeEnabled, setUserLocation]);
 
   const mapRef = useRef<MapView>(null);
   const [region, setRegion] = useState<Region>(
