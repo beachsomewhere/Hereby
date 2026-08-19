@@ -3,10 +3,11 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import MapView, { Circle, Marker, Region } from "react-native-maps";
 import * as Location from "expo-location";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useIsFocused } from "@react-navigation/native";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAppStore, effectiveLocation } from "../state/useAppStore";
-import * as backend from "../services/mockBackend";
-import { ConversationCategory, ConversationSummary, GeoPoint } from "../services/types";
+import * as backend from "../services/supabaseBackend";
+import { ConversationSummary, GeoPoint } from "../services/types";
 import { BubbleMarker, HEAT_COLORS } from "../components/BubbleMarker";
 import { ClusterMarker } from "../components/ClusterMarker";
 import { ConversationPreviewSheet } from "../components/ConversationPreviewSheet";
@@ -14,12 +15,13 @@ import { CreateConversationSheet } from "../components/CreateConversationSheet";
 import {
   bboxFromRegion,
   buildClusterIndex,
-  categoryForZoom,
+  defaultRadiusForZoom,
   deltaForZoom,
   dominantVenueLabel,
   isVisibleAtZoom,
+  minZoomForRadius,
+  MIN_RADIUS_M,
   supersedeBroaderConversations,
-  ZOOM_VISIBILITY,
   zoomFromRegion,
 } from "../services/clustering";
 import { computeRenderSize, heatLevel } from "../services/activityScore";
@@ -66,15 +68,40 @@ export function MapScreen({ navigation }: Props) {
   const [previewNearby, setPreviewNearby] = useState<ConversationSummary[]>([]);
   const [createVisible, setCreateVisible] = useState(false);
   const [createLocation, setCreateLocation] = useState<GeoPoint>();
-  const [createCategory, setCreateCategory] = useState<ConversationCategory>("micro_location");
+  const [createRadius, setCreateRadius] = useState<number>(MIN_RADIUS_M);
+  // Zoom level right before the create-chat sheet opens, so closing it can
+  // restore that framing instead of leaving the map at whatever zoom the
+  // radius slider last set (e.g. closing right after dragging to "wide
+  // area" would otherwise leave the user zoomed way out).
+  const preOpenRegionRef = useRef<Region | null>(null);
 
+  // Guards against overlapping poll ticks: if a request is still in flight
+  // when the next 5s interval fires (slow network, cold start), skip that
+  // tick instead of stacking a second concurrent request on top - unbounded
+  // stacking here was confirmed live as the cause of steadily-compounding
+  // request latency across the whole app during a session.
+  const refreshInFlightRef = useRef(false);
   const refresh = useCallback(async () => {
-    const center: GeoPoint = location ?? { lat: region.latitude, lng: region.longitude };
-    const results = await backend.getVisibleConversations(center);
-    setConversations(results);
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    try {
+      const center: GeoPoint = location ?? { lat: region.latitude, lng: region.longitude };
+      const results = await backend.getVisibleConversations(center);
+      setConversations(results);
+    } finally {
+      refreshInFlightRef.current = false;
+    }
   }, [location, region.latitude, region.longitude]);
 
+  // React Navigation's native stack keeps this screen mounted (not
+  // unmounted) while ConversationScreen is pushed on top of it, so without
+  // gating on focus this poll + realtime channel would keep running
+  // indefinitely in the background the whole time a user is inside a chat,
+  // competing for the same network/CPU as that screen's own polling.
+  const isFocused = useIsFocused();
+
   useEffect(() => {
+    if (!isFocused) return;
     refresh();
     const unsubscribe = backend.subscribeToMap(refresh);
     const interval = setInterval(refresh, 5000); // mirrors the periodic activity-score broadcast
@@ -82,7 +109,7 @@ export function MapScreen({ navigation }: Props) {
       unsubscribe();
       clearInterval(interval);
     };
-  }, [refresh]);
+  }, [refresh, isFocused]);
 
   // Recenter whenever location changes (app load, dev-mode teleport, real
   // movement). If nothing would be visible at the zoom we're already at -
@@ -96,9 +123,11 @@ export function MapScreen({ navigation }: Props) {
     (async () => {
       const results = await backend.getVisibleConversations(location);
       const currentZoom = zoomFromRegion(region.longitudeDelta);
-      const alreadyVisible = results.some((c) => ZOOM_VISIBILITY[c.category] <= currentZoom);
+      const alreadyVisible = results.some((c) => minZoomForRadius(c.participationRadiusM) <= currentZoom);
       const nearestThreshold =
-        results.length > 0 && !alreadyVisible ? Math.min(...results.map((c) => ZOOM_VISIBILITY[c.category])) : undefined;
+        results.length > 0 && !alreadyVisible
+          ? Math.min(...results.map((c) => minZoomForRadius(c.participationRadiusM)))
+          : undefined;
       setRegion((r) => {
         const next = {
           ...r,
@@ -123,7 +152,7 @@ export function MapScreen({ navigation }: Props) {
   // specific one out of the zoom-visible set again, so the broader one
   // naturally reappears.
   const visibleConversations = useMemo(() => {
-    const zoomVisible = conversations.filter((c) => isVisibleAtZoom(c.category, zoom));
+    const zoomVisible = conversations.filter((c) => isVisibleAtZoom(c.participationRadiusM, zoom));
     return supersedeBroaderConversations(zoomVisible);
   }, [conversations, zoom]);
 
@@ -135,7 +164,9 @@ export function MapScreen({ navigation }: Props) {
   // user's own pin is inside.
   function selectConversation(conversation: ConversationSummary) {
     setSelected(conversation);
-    const zoomHidden = conversations.filter((c) => c.id !== conversation.id && !isVisibleAtZoom(c.category, zoom));
+    const zoomHidden = conversations.filter(
+      (c) => c.id !== conversation.id && !isVisibleAtZoom(c.participationRadiusM, zoom)
+    );
     setPreviewNearby(zoomHidden);
   }
 
@@ -152,6 +183,7 @@ export function MapScreen({ navigation }: Props) {
 
   function handleLongPress(e: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) {
     const { latitude, longitude } = e.nativeEvent.coordinate;
+    preOpenRegionRef.current = region;
     setCreateLocation({ lat: latitude, lng: longitude });
     setCreateVisible(true);
   }
@@ -168,6 +200,7 @@ export function MapScreen({ navigation }: Props) {
 
   function handleStartChatPress() {
     const center = location ?? { lat: region.latitude, lng: region.longitude };
+    preOpenRegionRef.current = region;
     setCreateLocation(center);
     setCreateVisible(true);
   }
@@ -187,9 +220,12 @@ export function MapScreen({ navigation }: Props) {
   // both left enabled and instead corrected after the fact: any gesture -
   // a drag, or a pinch pivoting around the touch midpoint rather than the
   // current center - snaps back to the user's location once it completes,
-  // keeping only the zoom level it produced.
+  // keeping only the zoom level it produced. Suspended while the create-chat
+  // sheet is open, since that flow deliberately drives the camera itself
+  // (see the radius-fit effect below) and may be framing a long-pressed
+  // spot that isn't the user's own location.
   function handleRegionChangeComplete(r: Region) {
-    if (!location) {
+    if (createVisible || !location) {
       setRegion(r);
       return;
     }
@@ -200,11 +236,45 @@ export function MapScreen({ navigation }: Props) {
     }
   }
 
+  // While the create-chat sheet is open, keep the whole radius preview
+  // circle framed as the slider moves - zoomed way in for a "specific spot"
+  // pick, zoomed out for a "wide area" one - rather than leaving the map
+  // wherever it happened to be and letting a big circle run off-screen.
+  useEffect(() => {
+    if (!createVisible || !createLocation) return;
+    const spanMeters = createRadius * 2 * 3; // circle diameter, with padding around it
+    const span = spanMeters / 111320; // meters -> degrees (good enough at map scale)
+    const next = {
+      latitude: createLocation.lat,
+      longitude: createLocation.lng,
+      latitudeDelta: span,
+      longitudeDelta: span,
+    };
+    setRegion(next);
+    mapRef.current?.animateToRegion(next, 0);
+  }, [createVisible, createLocation, createRadius]);
+
+  // Once the sheet closes, hand the camera back to the always-centered-on-
+  // me behavior above instead of leaving it at whatever zoom the radius
+  // slider last framed - restore the zoom from just before the sheet
+  // opened. Deliberately only reacts to createVisible itself, not the
+  // region it reads - otherwise this would re-fire on every subsequent pan/
+  // zoom.
+  useEffect(() => {
+    if (createVisible || !location) return;
+    const base = preOpenRegionRef.current ?? region;
+    const next = { ...base, latitude: location.lat, longitude: location.lng };
+    setRegion(next);
+    mapRef.current?.animateToRegion(next, 300);
+  }, [createVisible]);
+
   async function handleJoin(conversation: ConversationSummary) {
     if (!currentUser || !location) return;
     setSelected(undefined);
     setPreviewNearby([]);
+    const t0 = Date.now();
     await backend.joinConversation(currentUser.id, conversation.id, location);
+    console.log(`[timing] joinConversation: ${Date.now() - t0}ms`);
     navigation.navigate("Conversation", { conversationId: conversation.id });
   }
 
@@ -231,7 +301,7 @@ export function MapScreen({ navigation }: Props) {
         {createVisible && createLocation && (
           <Circle
             center={{ latitude: createLocation.lat, longitude: createLocation.lng }}
-            radius={backend.RADII[createCategory].participation}
+            radius={createRadius}
             strokeColor="rgba(44,44,42,0.5)"
             fillColor="rgba(44,44,42,0.08)"
           />
@@ -307,11 +377,17 @@ export function MapScreen({ navigation }: Props) {
         </View>
       )}
 
-      <View style={styles.topBar}>
-        <Pressable style={styles.devButton} onPress={() => navigation.navigate("DevPanel")}>
-          <Text style={styles.devButtonText}>{devModeEnabled ? "Dev mode: ON" : "Dev mode"}</Text>
-        </Pressable>
-      </View>
+      {/* __DEV__ is false in any release/TestFlight build - dev mode fakes
+          GPS location and seeds synthetic data against the mock backend
+          only, neither of which should be reachable by a real tester on a
+          real shared database. */}
+      {__DEV__ && (
+        <View style={styles.topBar}>
+          <Pressable style={styles.devButton} onPress={() => navigation.navigate("DevPanel")}>
+            <Text style={styles.devButtonText}>{devModeEnabled ? "Dev mode: ON" : "Dev mode"}</Text>
+          </Pressable>
+        </View>
+      )}
 
       {location && (
         <Pressable style={styles.recenterButton} onPress={handleRecenter}>
@@ -337,8 +413,8 @@ export function MapScreen({ navigation }: Props) {
         visible={createVisible}
         location={createLocation}
         userId={currentUser?.id}
-        defaultCategory={categoryForZoom(zoom)}
-        onCategoryChange={setCreateCategory}
+        defaultRadius={defaultRadiusForZoom(zoom)}
+        onRadiusChange={setCreateRadius}
         onClose={() => setCreateVisible(false)}
         onCreated={(conv) => {
           setCreateVisible(false);

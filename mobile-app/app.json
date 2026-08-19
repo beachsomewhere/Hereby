@@ -9,12 +9,13 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": false,
+      "bundleIdentifier": "com.hereby.app",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Hereby shows conversations happening around your current location. Your exact location is never shown to other users.",
-        "UIBackgroundModes": ["location"]
+        "NSLocationWhenInUseUsageDescription": "Hereby shows conversations happening around your current location. Your exact location is never shown to other users."
       }
     },
     "android": {
+      "package": "com.hereby.app",
       "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

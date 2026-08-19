@@ -13,7 +13,6 @@
 
 import {
   Conversation,
-  ConversationCategory,
   ConversationSummary,
   CreateConversationInput,
   CreateConversationResult,
@@ -31,7 +30,9 @@ import {
 import { distanceMeters, snapToGrid, jitter } from "./geo";
 import { computeActivityScore, computeRenderSize, minutesBetween, nextStatus } from "./activityScore";
 import { SCENARIOS, ScenarioName } from "../dev/scenarios";
-import { ZOOM_VISIBILITY } from "./clustering";
+import { MIN_RADIUS_M, MAX_RADIUS_M } from "./clustering";
+import { unlockedIcons } from "./avatarIcons";
+import { generatePseudonym } from "./pseudonym";
 
 // ---------------------------------------------------------------------------
 // In-memory "clock" - lets dev mode fast-forward time without waiting.
@@ -50,28 +51,39 @@ export function advanceClockMinutes(minutes: number) {
 }
 
 // ---------------------------------------------------------------------------
-// Radii + expiration defaults, per Phase 1 sections 9 and 10.
+// Radius-derived defaults, per Phase 1 sections 9 and 10 - originally 4
+// fixed category tiers, now a continuous function of the chosen radius
+// (see CreateConversationSheet's slider), linearly interpolated between the
+// slider's own MIN/MAX_RADIUS_M bounds (clustering.ts).
 // ---------------------------------------------------------------------------
-export const RADII: Record<ConversationCategory, { discovery: number; participation: number; graceMin: number; ttlHours: number }> = {
-  micro_location: { discovery: 400, participation: 25, graceMin: 12, ttlHours: 5 },
-  venue: { discovery: 1200, participation: 250, graceMin: 25, ttlHours: 6 },
-  area: { discovery: 3000, participation: 800, graceMin: 35, ttlHours: 10 },
-  corridor: { discovery: 2500, participation: 350, graceMin: 15, ttlHours: 2 },
-};
+function interpolateForRadius(radiusM: number, lo: number, hi: number): number {
+  const t = Math.max(0, Math.min(1, (radiusM - MIN_RADIUS_M) / (MAX_RADIUS_M - MIN_RADIUS_M)));
+  return lo + t * (hi - lo);
+}
+
+function graceMinutesForRadius(radiusM: number): number {
+  return Math.round(interpolateForRadius(radiusM, 8, 35));
+}
+
+function ttlHoursForRadius(radiusM: number): number {
+  return Math.round(interpolateForRadius(radiusM, 3, 10));
+}
+
+// How far away this chat can be surfaced as a possible duplicate when
+// someone's about to create a similar one nearby (see suggestDuplicates) -
+// deliberately wider than the participation radius itself.
+function discoveryRadiusForRadius(radiusM: number): number {
+  return Math.round(Math.max(150, radiusM * 4));
+}
 
 // Grid cell size used to generalize/snap a conversation's stored location
-// (see snapToGrid). Sized per category so the worst-case snap offset
-// (~cellMeters * sqrt(2)/2) never exceeds that category's own participation
-// radius above - otherwise a chat's own creator could snap to just outside
-// their own eligibility radius. The default 120m grid has plenty of margin
-// for venue/area/corridor's much larger radii, but micro_location's tight
-// 25m radius needs a much tighter grid.
-const SNAP_CELL_M: Record<ConversationCategory, number> = {
-  micro_location: 15,
-  venue: 120,
-  area: 120,
-  corridor: 120,
-};
+// (see snapToGrid). Scales with the chosen radius so the worst-case snap
+// offset (~cellMeters * sqrt(2)/2, i.e. ~0.35x radius here) never approaches
+// the participation radius itself - otherwise a chat's own creator could
+// snap to just outside their own eligibility radius.
+function snapCellForRadius(radiusM: number): number {
+  return Math.min(120, radiusM * 0.5);
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -130,15 +142,7 @@ export function subscribeToThread(threadId: string, listener: Listener): () => v
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------
-const ADJECTIVES = ["Quiet", "Amber", "Coastal", "Rapid", "Gentle", "Bold", "Steady", "Curious"];
-const NOUNS = ["Falcon", "Harbor", "Maple", "Ridge", "Comet", "Otter", "Lantern", "Cedar"];
-
-export function generatePseudonym(): string {
-  const a = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-  const n = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-  const num = Math.floor(Math.random() * 900) + 100;
-  return `${a}${n}${num}`;
-}
+export { generatePseudonym } from "./pseudonym";
 
 // Levels/badges should be "few and legible" per Phase 1 section 11 - 5
 // levels, driven only by helpfulPoints (never raw message/join counts, to
@@ -180,6 +184,27 @@ export function registerUser(user: User): void {
 
 export async function getUser(userId: string): Promise<User | undefined> {
   return users.get(userId);
+}
+
+// Only ever sets an icon the user has actually unlocked at their current
+// level (see avatarIcons.ts#unlockedIcons) - defends against a stale
+// picker selection made before a level dropped out of sync client-side.
+//
+// Returns a new object (rather than mutating in place, unlike voteMessage's
+// helpfulPoints/level update below) and replaces the map entry with that
+// same object - callers hand this straight to setState, and React bails out
+// of re-rendering when a setState call receives a reference-identical
+// object, so a same-reference mutation here would sit invisible until some
+// unrelated re-render happened to catch up. Replacing the map entry with
+// this exact object (not a second, detached copy) keeps voteMessage's
+// later in-place mutations landing on the object the UI is actually holding.
+export async function updateAvatarIcon(userId: string, icon: string): Promise<User | undefined> {
+  const user = users.get(userId);
+  if (!user) return undefined;
+  if (!unlockedIcons(user.level).some((i) => i.icon === icon)) return user;
+  const updated: User = { ...user, avatarIcon: icon };
+  users.set(userId, updated);
+  return updated;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,9 +270,12 @@ export async function getConversation(id: string, userLocation?: GeoPoint): Prom
 }
 
 // ---------------------------------------------------------------------------
-// Duplicate suggestion - naive keyword + proximity + category match, as
-// specified in Phase 1 section 3 (explicitly not semantic/embedding-based
-// for MVP).
+// Duplicate suggestion - naive keyword + proximity match, as specified in
+// Phase 1 section 3 (explicitly not semantic/embedding-based for MVP).
+// Radius is now arbitrary per chat rather than one of a few fixed tiers, so
+// there's no meaningful "same category" filter anymore - proximity
+// (against the candidate's own discoveryRadiusM) plus keyword overlap is
+// the whole match now.
 // ---------------------------------------------------------------------------
 function keywordOverlap(a: string, b: string): number {
   const wa = new Set(a.toLowerCase().split(/\W+/).filter(Boolean));
@@ -261,12 +289,10 @@ function keywordOverlap(a: string, b: string): number {
 
 export async function suggestDuplicates(
   location: GeoPoint,
-  category: ConversationCategory,
   title: string
 ): Promise<ConversationSummary[]> {
   return Array.from(conversations.values())
     .filter((c) => c.status !== "archived" && c.status !== "deleted")
-    .filter((c) => c.category === category)
     .filter((c) => distanceMeters(c.location, location) <= c.discoveryRadiusM)
     .map((c) => ({ conv: c, overlap: keywordOverlap(c.title, title) }))
     .filter((x) => x.overlap > 0.25)
@@ -276,27 +302,26 @@ export async function suggestDuplicates(
 }
 
 // ---------------------------------------------------------------------------
-// Supersession warning - a new conversation at this location/category would
+// Supersession warning - a new conversation at this location/radius would
 // immediately become the "macro chat" (see clustering.ts's
-// supersedeBroaderConversations) for any existing, more specific
+// supersedeBroaderConversations) for any existing, smaller-radius
 // conversation whose location falls within its own participation radius.
 // Checked at creation time so the creator can confirm that's intended
 // before it happens.
 // ---------------------------------------------------------------------------
 export async function findConversationsToSupersede(
   location: GeoPoint,
-  category: ConversationCategory
+  radiusM: number
 ): Promise<ConversationSummary[]> {
-  const radii = RADII[category];
   return Array.from(conversations.values())
     .filter((c) => c.status !== "archived" && c.status !== "deleted")
-    .filter((c) => ZOOM_VISIBILITY[c.category] > ZOOM_VISIBILITY[category])
-    .filter((c) => distanceMeters(c.location, location) <= radii.participation)
+    .filter((c) => c.participationRadiusM < radiusM)
+    .filter((c) => distanceMeters(c.location, location) <= radiusM)
     .map((c) => toSummary(c, location));
 }
 
 export async function createConversation(input: CreateConversationInput): Promise<CreateConversationResult> {
-  const suggestions = await suggestDuplicates(input.location, input.category, input.title);
+  const suggestions = await suggestDuplicates(input.location, input.title);
   if (suggestions.length > 0) {
     // Real behavior: return suggestions and let the client prompt
     // "join one of these instead?" before calling createConversation again
@@ -304,22 +329,20 @@ export async function createConversation(input: CreateConversationInput): Promis
     return { suggestions };
   }
 
-  const radii = RADII[input.category];
   const id = nextId("conv");
-  const snapped = snapToGrid(input.location, SNAP_CELL_M[input.category]);
+  const snapped = snapToGrid(input.location, snapCellForRadius(input.radiusM));
   const n = nowIso();
   const conv: Conversation = {
     id,
     title: input.title,
-    category: input.category,
     status: "new",
     location: snapped,
     venueLabel: undefined,
-    discoveryRadiusM: radii.discovery,
-    participationRadiusM: radii.participation,
+    discoveryRadiusM: discoveryRadiusForRadius(input.radiusM),
+    participationRadiusM: input.radiusM,
     createdBy: input.createdBy,
     createdAt: n,
-    expiresAt: new Date(now().getTime() + radii.ttlHours * 3600 * 1000).toISOString(),
+    expiresAt: new Date(now().getTime() + ttlHoursForRadius(input.radiusM) * 3600 * 1000).toISOString(),
     lastActivityAt: n,
     participantCount: 0,
     messagesLast15Min: 0,
@@ -373,7 +396,7 @@ export async function checkEligibility(
   const conv = conversations.get(conversationId);
   if (!conv) return { state: "left", canPost: false, canRead: false };
 
-  const radii = RADII[conv.category];
+  const graceMin = graceMinutesForRadius(conv.participationRadiusM);
   const dist = distanceMeters(rawLocation, conv.location); // computed, then rawLocation is discarded
   const convParticipants = participants.get(conversationId)!;
   const existing = convParticipants.get(userId);
@@ -386,7 +409,7 @@ export async function checkEligibility(
   } else if (existing && (existing.state === "inside" || existing.state === "grace")) {
     const graceStart = existing.graceStartedAt ?? nowIso();
     const minutesInGrace = minutesBetween(graceStart, nowIso());
-    if (minutesInGrace <= radii.graceMin) {
+    if (minutesInGrace <= graceMin) {
       state = "grace";
       convParticipants.set(userId, { ...existing, state, graceStartedAt: graceStart });
     } else {
@@ -473,6 +496,7 @@ export async function sendMessage(
     userId: user.id,
     username: user.username,
     authorLevel: user.level,
+    authorAvatarIcon: user.avatarIcon,
     body,
     createdAt: nowIso(),
     replyToId,
@@ -716,7 +740,7 @@ export async function devLoadScenario(name: ScenarioName, center: GeoPoint): Pro
     const location = { lat: center.lat + seed.dLat, lng: center.lng + seed.dLng };
     const result = await createConversation({
       title: seed.title,
-      category: seed.category,
+      radiusM: seed.radiusM,
       location,
       createdBy: "seed",
     });

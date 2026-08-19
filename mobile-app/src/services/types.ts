@@ -2,12 +2,6 @@
 // supabase/schema.sql 1:1 on purpose, so the mock backend and a future real
 // Supabase-backed implementation can share the same shapes.
 
-export type ConversationCategory =
-  | "micro_location" // gate, section, table
-  | "venue" // terminal, stadium, convention center
-  | "area" // festival, park, neighborhood event
-  | "corridor"; // traffic, transit disruption
-
 export type ConversationStatus =
   | "new"
   | "active"
@@ -33,6 +27,9 @@ export interface User {
   id: string;
   username: string;
   avatarSeed: string;
+  // Chosen unlockable icon (see avatarIcons.ts) - undefined until the user
+  // picks one, which falls back to initials-in-a-circle.
+  avatarIcon?: string;
   level: number;
   helpfulPoints: number;
   createdAt: string; // ISO timestamp, only "member since" is ever shown publicly
@@ -67,7 +64,6 @@ export interface Thread {
 export interface Conversation {
   id: string;
   title: string;
-  category: ConversationCategory;
   status: ConversationStatus;
   location: GeoPoint; // already generalized/snapped - never a raw creator coordinate
   venueLabel?: string; // e.g. "Terminal B", "I-90 corridor"
@@ -99,6 +95,8 @@ export interface Message {
   // snapshot, like username, not a live-updating value. A user leveling up
   // doesn't retroactively relabel their older messages.
   authorLevel: number;
+  // Same snapshot treatment for the author's chosen avatar icon.
+  authorAvatarIcon?: string;
   body: string;
   createdAt: string;
   replyToId?: string;
@@ -136,7 +134,7 @@ export interface EligibilityResult {
 
 export interface CreateConversationInput {
   title: string;
-  category: ConversationCategory;
+  radiusM: number;
   location: GeoPoint;
   createdBy: string;
 }

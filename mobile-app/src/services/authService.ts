@@ -1,14 +1,12 @@
 // Real account layer, backed by Supabase Auth (email OTP) + a `public.users`
-// profile table - see supabase/schema.sql for the trimmed users-table SQL
-// this expects to already exist. Deliberately kept separate from
-// mockBackend.ts, which stays pure-mock for everything else (conversations,
-// threads, messages, voting); registerUser() is the one bridge between the
-// two, so a real user's authored/voted-on content keeps working against the
-// mock the same way a synthetic user's does.
+// profile table - see supabase/schema.sql for the users-table SQL this
+// expects to already exist. supabaseBackend.ts reads/writes the same real
+// `users` table directly (no mock bridge needed - see its own header
+// comment for why that's no longer necessary now that conversations,
+// threads, and messages are real too).
 
 import { supabase } from "./supabaseClient";
 import { validateUsername } from "./usernameValidation";
-import { registerUser } from "./mockBackend";
 import { User } from "./types";
 
 interface UsersRow {
@@ -16,6 +14,7 @@ interface UsersRow {
   auth_id: string;
   username: string;
   avatar_seed: string;
+  avatar_icon: string | null;
   level: number;
   helpful_points: number;
   created_at: string;
@@ -27,6 +26,7 @@ function mapRow(row: UsersRow): User {
     id: row.id,
     username: row.username,
     avatarSeed: row.avatar_seed,
+    avatarIcon: row.avatar_icon ?? undefined,
     level: row.level,
     helpfulPoints: row.helpful_points,
     createdAt: row.created_at,
@@ -79,9 +79,7 @@ export async function createProfile(
     .eq("auth_id", authData.user.id)
     .maybeSingle();
   if (existing) {
-    const user = mapRow(existing as UsersRow);
-    registerUser(user);
-    return { ok: true, user };
+    return { ok: true, user: mapRow(existing as UsersRow) };
   }
 
   const validation = validateUsername(username, authData.user.email ?? undefined);
@@ -102,9 +100,11 @@ export async function createProfile(
     return { ok: false, error: error.message };
   }
 
-  const user = mapRow(data as UsersRow);
-  registerUser(user);
-  return { ok: true, user };
+  return { ok: true, user: mapRow(data as UsersRow) };
+}
+
+export async function signOut(): Promise<void> {
+  await supabase.auth.signOut();
 }
 
 export async function restoreSession(): Promise<User | undefined> {
@@ -119,7 +119,5 @@ export async function restoreSession(): Promise<User | undefined> {
 
   if (error || !data) return undefined;
 
-  const user = mapRow(data as UsersRow);
-  registerUser(user);
-  return user;
+  return mapRow(data as UsersRow);
 }

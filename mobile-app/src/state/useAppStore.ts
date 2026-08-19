@@ -3,7 +3,12 @@ import { GeoPoint, ParticipantState, User } from "../services/types";
 
 interface AppState {
   currentUser?: User;
-  setCurrentUser: (u: User) => void;
+  setCurrentUser: (u: User | undefined) => void;
+  // Clears currentUser plus every other piece of session-scoped state below
+  // (blocks, reports, location) - logging out and back in as a different
+  // account on the same device must not carry over the previous account's
+  // blocked/reported lists onto the new one.
+  logOut: () => void;
 
   userLocation?: GeoPoint;
   setUserLocation: (p: GeoPoint) => void;
@@ -24,11 +29,25 @@ interface AppState {
 
   blockedUserIds: Set<string>;
   blockUser: (userId: string) => void;
+
+  // Messages the current user has reported - hidden from their own feed
+  // immediately, same in-memory-only treatment as blockedUserIds above.
+  reportedMessageIds: Set<string>;
+  reportMessage: (messageId: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
   currentUser: undefined,
   setCurrentUser: (u) => set({ currentUser: u }),
+  logOut: () =>
+    set({
+      currentUser: undefined,
+      userLocation: undefined,
+      devSimulatedLocation: undefined,
+      participantStates: {},
+      blockedUserIds: new Set(),
+      reportedMessageIds: new Set(),
+    }),
 
   userLocation: undefined,
   setUserLocation: (p) => set({ userLocation: p }),
@@ -48,6 +67,14 @@ export const useAppStore = create<AppState>((set) => ({
       const next = new Set(s.blockedUserIds);
       next.add(userId);
       return { blockedUserIds: next };
+    }),
+
+  reportedMessageIds: new Set(),
+  reportMessage: (messageId) =>
+    set((s) => {
+      const next = new Set(s.reportedMessageIds);
+      next.add(messageId);
+      return { reportedMessageIds: next };
     }),
 }));
 

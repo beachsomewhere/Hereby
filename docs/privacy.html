@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hereby — Privacy Policy</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<style>
+  :root {
+    --bg: #FAF9F5;
+    --ink: #2C2C2A;
+    --muted: #5F5E5A;
+    --faint: #888780;
+    --line: #EDEBE3;
+    --card: #F1EFE8;
+    --accent: #EF9F27;
+    --accent-bg: #FAEEDA;
+    --accent-ink: #412402;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+
+  header {
+    padding: 64px 0 32px;
+  }
+  header a.back { color: var(--muted); font-size: 0.9rem; text-decoration: none; }
+  header a.back:hover { color: var(--ink); }
+  header h1 {
+    font-size: 2.2rem;
+    font-weight: 600;
+    margin: 16px 0 4px;
+    letter-spacing: -0.02em;
+  }
+  header p.updated { color: var(--faint); font-size: 0.9rem; margin: 0; }
+
+  main { padding-bottom: 72px; }
+
+  h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 40px 0 10px;
+    letter-spacing: -0.01em;
+  }
+  p, li { color: var(--muted); font-size: 0.98rem; }
+  ul { padding-left: 20px; margin: 10px 0; }
+  li { margin: 6px 0; }
+  strong { color: var(--ink); }
+  a { color: var(--accent-ink); }
+
+  .callout {
+    background: var(--accent-bg);
+    color: var(--accent-ink);
+    border-radius: 12px;
+    padding: 16px 20px;
+    font-size: 0.95rem;
+    margin: 24px 0;
+  }
+  .callout strong { color: var(--accent-ink); }
+
+  footer {
+    padding: 32px 0 72px;
+    text-align: center;
+    color: var(--faint);
+    font-size: 0.9rem;
+    border-top: 1px solid var(--line);
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="back" href="index.html">&larr; Hereby</a>
+    <h1>Privacy Policy</h1>
+    <p class="updated">Last updated August 19, 2026</p>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <p>Hereby is a location-based group chat app. This page explains what data the app collects, how it's used, and how long it's kept. Hereby is a small, independently-run project — if anything here is unclear, reach out (contact info at the bottom).</p>
+
+    <div class="callout">
+      <strong>The short version:</strong> your exact location is never shown to other users or stored. Chats are temporary and are automatically and permanently deleted a few days after they end. There are no ads and no third-party analytics or tracking SDKs in the app.
+    </div>
+
+    <h2>What we collect</h2>
+    <ul>
+      <li><strong>Email address</strong> — used only to sign you in via a one-time code. We don't use it for marketing.</li>
+      <li><strong>A generated username</strong> — not your real name, chosen automatically at signup.</li>
+      <li><strong>Location</strong> — used to determine which nearby conversations you can see and join. See "How location is handled" below for exactly what is and isn't stored.</li>
+      <li><strong>Messages, votes, and thread activity</strong> you post or take inside the app.</li>
+      <li><strong>An avatar icon</strong> you select — a simple emoji-style icon, not a photo.</li>
+      <li><strong>Reports you file</strong> against a message or user, if you use that feature.</li>
+    </ul>
+
+    <h2>How location is handled</h2>
+    <p>Your device's precise GPS coordinate is sent to our server only at the moment it's needed — to check whether you're close enough to join or post in a specific conversation. That raw coordinate is used for a single distance calculation and then discarded; it is never written to a database.</p>
+    <p>When you create a new conversation, its location is snapped to a coarse grid before being stored, so the stored location is an approximate area, never your precise personal location. Other users never see your individual location — only the location of conversations, which reflects where they were created, not where any specific person is standing.</p>
+
+    <h2>How long we keep data</h2>
+    <p>Conversations in Hereby are inherently temporary. Once a conversation goes quiet and its activity window ends, it's archived, and permanently deleted from our database within about 72 hours — along with all of its threads, messages, and votes. There is no long-term message archive.</p>
+    <p>Your account (email, username, avatar, and activity level) persists across conversations until you delete your account. Deleting your account also deletes any messages you've sent that still exist at that time.</p>
+
+    <h2>Who we share data with</h2>
+    <p>We don't sell your data or share it with advertisers. The app has no third-party analytics, advertising, or crash-reporting SDKs. Data is stored with our backend infrastructure provider (Supabase), which hosts the database and authentication used to run the app — they don't use your data for their own purposes.</p>
+
+    <h2>Your choices</h2>
+    <ul>
+      <li>You can sign out at any time from your profile.</li>
+      <li>You can block or report other users from within a conversation.</li>
+      <li>To request deletion of your account and associated data, contact us using the email below.</li>
+    </ul>
+
+    <h2>Children</h2>
+    <p>Hereby is not directed at children under 13, and we don't knowingly collect data from them.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If this policy changes in a meaningful way, we'll update the date at the top of this page.</p>
+
+    <h2>Contact</h2>
+    <p>Questions about this policy or a data deletion request: <a href="mailto:kylecbarnes@gmail.com">kylecbarnes@gmail.com</a></p>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Hereby. Source on <a href="https://github.com/beachsomewhere/kylechat">GitHub</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

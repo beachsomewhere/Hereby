@@ -1,6 +1,8 @@
 import React from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { User } from "../services/types";
+import { Avatar } from "./Avatar";
+import { AVATAR_ICONS } from "../services/avatarIcons";
 
 interface Props {
   user?: User;
@@ -9,6 +11,8 @@ interface Props {
   onClose: () => void;
   onBlock: () => void;
   onReport: () => void;
+  onSelectIcon?: (icon: string) => void;
+  onLogOut?: () => void;
 }
 
 /**
@@ -17,7 +21,7 @@ interface Props {
  * No feed, no history, no location, no real name - and there is nowhere
  * else in the app to see more about a user than this.
  */
-export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport }: Props) {
+export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport, onSelectIcon, onLogOut }: Props) {
   if (!user) return null;
   const accountAgeDays = Math.max(0, Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000));
   const ageLabel = accountAgeDays < 1 ? "New today" : accountAgeDays < 30 ? `${accountAgeDays}d on Hereby` : `${Math.floor(accountAgeDays / 30)}mo on Hereby`;
@@ -27,8 +31,8 @@ export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport 
       <Pressable style={styles.backdrop} onPress={onClose} />
       <View style={styles.cardWrap} pointerEvents="box-none">
         <View style={styles.card}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{user.username.slice(0, 2).toUpperCase()}</Text>
+          <View style={styles.avatarWrap}>
+            <Avatar username={user.username} avatarIcon={user.avatarIcon} size={56} />
           </View>
           <Text style={styles.username}>{user.username}</Text>
           <Text style={styles.meta}>Level {user.level} · {ageLabel}</Text>
@@ -47,6 +51,35 @@ export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport 
                   <Text style={styles.badgeChipText}>{b}</Text>
                 </View>
               ))}
+            </View>
+          )}
+
+          {isSelf && (
+            <View style={styles.iconPickerSection}>
+              <Text style={styles.iconPickerTitle}>Your icon</Text>
+              <View style={styles.iconGrid}>
+                {AVATAR_ICONS.map((option) => {
+                  const unlocked = option.requiredLevel <= user.level;
+                  const selected = user.avatarIcon === option.icon;
+                  return (
+                    <View key={option.id} style={styles.iconChipWrap}>
+                      <Pressable
+                        style={[styles.iconChip, selected && styles.iconChipSelected, !unlocked && styles.iconChipLocked]}
+                        onPress={() => unlocked && onSelectIcon?.(option.icon)}
+                        disabled={!unlocked}
+                      >
+                        <Text style={[styles.iconChipEmoji, !unlocked && styles.iconChipEmojiLocked]}>{option.icon}</Text>
+                      </Pressable>
+                      <Text style={styles.iconChipLevel}>{unlocked ? "" : `Lv ${option.requiredLevel}`}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+              {onLogOut && (
+                <Pressable style={styles.logOutButton} onPress={onLogOut}>
+                  <Text style={styles.logOutButtonText}>Log out</Text>
+                </Pressable>
+              )}
             </View>
           )}
 
@@ -74,8 +107,7 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
   cardWrap: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" },
   card: { backgroundColor: "white", borderRadius: 16, padding: 24, width: 260, alignItems: "center" },
-  avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: "#CECBF6", alignItems: "center", justifyContent: "center", marginBottom: 12 },
-  avatarText: { fontSize: 18, fontWeight: "500", color: "#26215C" },
+  avatarWrap: { marginBottom: 12 },
   username: { fontSize: 16, fontWeight: "500" },
   meta: { fontSize: 12, color: "#888780", marginTop: 2 },
   statsRow: { flexDirection: "row", marginTop: 16 },
@@ -83,6 +115,27 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 20, fontWeight: "500" },
   statLabel: { fontSize: 11, color: "#888780", marginTop: 2 },
   badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, justifyContent: "center", marginTop: 14 },
+  iconPickerSection: { marginTop: 16, alignItems: "center" },
+  iconPickerTitle: { fontSize: 12, fontWeight: "500", color: "#5F5E5A", marginBottom: 8 },
+  iconGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center" },
+  iconChipWrap: { alignItems: "center", width: 44 },
+  iconChip: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#F1EFE8",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  iconChipSelected: { borderColor: "#2C2C2A" },
+  iconChipLocked: { backgroundColor: "#F7F6F2" },
+  iconChipEmoji: { fontSize: 20 },
+  iconChipEmojiLocked: { opacity: 0.3 },
+  iconChipLevel: { fontSize: 9, color: "#888780", marginTop: 2, height: 12 },
+  logOutButton: { marginTop: 18 },
+  logOutButtonText: { fontSize: 13, color: "#A32D2D" },
   badgeChip: { backgroundColor: "#F1EFE8", borderRadius: 999, paddingVertical: 4, paddingHorizontal: 10 },
   badgeChipText: { fontSize: 11, color: "#444441" },
   actionsRow: { flexDirection: "row", gap: 10, marginTop: 18 },

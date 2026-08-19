@@ -1,8 +1,6 @@
-import { ConversationCategory } from "../services/types";
-
 export interface ScenarioConversationSeed {
   title: string;
-  category: ConversationCategory;
+  radiusM: number;
   dLat: number; // offset in degrees from the scenario's center point
   dLng: number;
   participants: number;
@@ -29,7 +27,7 @@ export const SCENARIOS: Record<string, Scenario> = {
     conversations: [
       {
         title: "What's going on at the airport today?",
-        category: "area",
+        radiusM: 600,
         dLat: 0,
         dLng: 0,
         participants: 35,
@@ -38,7 +36,7 @@ export const SCENARIOS: Record<string, Scenario> = {
       },
       {
         title: "UA663 delay",
-        category: "micro_location",
+        radiusM: 30,
         dLat: 0.0006,
         dLng: 0.0004,
         participants: 14,
@@ -47,7 +45,7 @@ export const SCENARIOS: Record<string, Scenario> = {
       },
       {
         title: "Gate C12 boarding?",
-        category: "micro_location",
+        radiusM: 30,
         dLat: 0.0004,
         dLng: 0.0007,
         participants: 3,
@@ -56,7 +54,7 @@ export const SCENARIOS: Record<string, Scenario> = {
       },
       {
         title: "Security line at Terminal B",
-        category: "venue",
+        radiusM: 200,
         dLat: -0.0003,
         dLng: 0.0009,
         participants: 6,
@@ -71,7 +69,7 @@ export const SCENARIOS: Record<string, Scenario> = {
     conversations: [
       {
         title: "When does the headliner start?",
-        category: "area",
+        radiusM: 600,
         dLat: 0.0002,
         dLng: -0.0003,
         participants: 22,
@@ -80,7 +78,7 @@ export const SCENARIOS: Record<string, Scenario> = {
       },
       {
         title: "Parking lot exit backed up",
-        category: "micro_location",
+        radiusM: 30,
         dLat: -0.0008,
         dLng: -0.0006,
         participants: 9,
@@ -95,7 +93,7 @@ export const SCENARIOS: Record<string, Scenario> = {
     conversations: [
       {
         title: "Why is traffic stopped on I-90 eastbound?",
-        category: "corridor",
+        radiusM: 300,
         dLat: 0.0001,
         dLng: 0.0015,
         participants: 41,
@@ -110,7 +108,7 @@ export const SCENARIOS: Record<string, Scenario> = {
     conversations: [
       {
         title: "Best concession line right now?",
-        category: "venue",
+        radiusM: 200,
         dLat: 0.0003,
         dLng: 0.0002,
         participants: 11,
@@ -119,7 +117,7 @@ export const SCENARIOS: Record<string, Scenario> = {
       },
       {
         title: "Any updates on the injury delay?",
-        category: "area",
+        radiusM: 600,
         dLat: -0.0002,
         dLng: 0.0004,
         participants: 30,
@@ -134,7 +132,7 @@ export const SCENARIOS: Record<string, Scenario> = {
     conversations: [
       {
         title: "General conference chatter",
-        category: "area",
+        radiusM: 600,
         dLat: 0,
         dLng: 0,
         participants: 40,
@@ -143,7 +141,7 @@ export const SCENARIOS: Record<string, Scenario> = {
       },
       {
         title: "Keynote Q&A - anyone catch the slide link?",
-        category: "micro_location",
+        radiusM: 30,
         dLat: 0.0002,
         dLng: 0.0001,
         participants: 18,
@@ -152,7 +150,7 @@ export const SCENARIOS: Record<string, Scenario> = {
       },
       {
         title: "Best sessions today?",
-        category: "venue",
+        radiusM: 200,
         dLat: -0.0001,
         dLng: -0.0002,
         participants: 8,

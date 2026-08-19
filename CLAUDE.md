@@ -19,31 +19,49 @@ npm run start      # then press i (iOS simulator) or a (Android emulator), or sc
 npm run typecheck  # tsc --noEmit — no separate lint/test scripts exist yet
 ```
 
-No API keys or `.env` are required — `react-native-maps` uses its platform default provider, and the
-backend is fully in-memory (see below). The web target (`npm run web` / pressing `w`) does **not** render
-the map screen; `react-native-maps` is a native module with no web shim wired up here. Use a simulator,
-emulator, or Expo Go on a device.
+`.env` (gitignored) needs `EXPO_PUBLIC_SUPABASE_URL`/`EXPO_PUBLIC_SUPABASE_ANON_KEY` for a live Supabase
+project — auth, conversations, threads, messages, and votes are all real now (see below), not mocked.
+`react-native-maps` uses its platform default provider. The web target (`npm run web` / pressing `w`) does
+**not** render the map screen; `react-native-maps` is a native module with no web shim wired up here. Use a
+simulator, emulator, or Expo Go on a device.
 
 There's no automated test suite currently — verification is `npm run typecheck` plus manually exercising
-the app (dev mode, described below, is the primary way to do this without waiting on real time/location).
+the app. Dev mode (`DevPanelScreen`, described below) is the primary way to exercise the UI without waiting
+on real time/location, but it's gated behind `__DEV__` and talks only to the in-memory mock — it never
+touches the real backend or its shared data, by design (see below).
 
 ## Architecture
 
-### The mock-backend swap is the central design constraint
+### Two backend implementations behind one function-signature contract
 
-Every screen and component talks to the backend only through named function imports from
-`src/services/mockBackend.ts` (`getVisibleConversations`, `createConversation`, `joinConversation`,
-`sendMessage`, `getThreads`, ...) — never to storage directly. The intent is that a future
-`src/services/supabaseBackend.ts` implementing the same function signatures is a drop-in replacement.
-`supabase/schema.sql` and `supabase/edge-functions/*.ts` are reference implementations of what that real
-backend would look like, meant to mirror the mock's data shapes and logic 1:1 — `src/services/types.ts`
-says so explicitly in its header comment. `supabase/edge-functions/` is Deno code (URL imports, the `Deno`
-global) and is excluded from `tsc` via `tsconfig.json`'s `exclude` — don't try to typecheck it with the
-Node toolchain.
+Every screen and component talks to the backend only through named function imports
+(`getVisibleConversations`, `createConversation`, `joinConversation`, `sendMessage`, `getThreads`, ...) —
+never to storage directly. Two modules implement that exact same function surface:
 
-**Known gap:** the edge-function stubs were not updated when threads were added to the mock backend (see
-below) — they still model one flat conversation → messages, not conversation → threads → messages. If you're
-touching the Supabase side, check `mockBackend.ts` first for current behavior.
+- `src/services/supabaseBackend.ts` — the real, production backend. All non-dev screens/components import
+  from here. Reads/writes real Postgres tables (`supabase/schema.sql`) directly for non-trust-sensitive
+  operations, and calls Postgres RPCs or `supabase/functions/*/index.ts` Edge Functions for anything
+  trust-sensitive (location eligibility, conversation creation, voting, avatar-icon selection) — RLS blocks
+  the client from writing to `conversations`, `conversation_participants`, and `confirmations` directly, so
+  those paths are the only way in. Realtime subscriptions (`subscribeToMap`/`subscribeToConversation`/
+  `subscribeToThread`) replace the mock's in-memory pub-sub with `supabase.channel(...).on('postgres_changes', ...)`,
+  keeping the same `(listener) => unsubscribe` shape so call sites didn't need to change.
+- `src/services/mockBackend.ts` — pure in-memory, used **only** by `DevPanelScreen.tsx` now (every
+  `dev*`-prefixed export — `devSeedFooFightersDemo`, `devLoadScenario`, `devResetAll`, etc. — plus
+  `advanceClockMinutes`). Nothing else imports it. `DevPanelScreen`'s entry point on `MapScreen` is wrapped
+  in `{__DEV__ && ...}` so it can't ship to a release/TestFlight build and pollute the real shared database
+  with synthetic data.
+
+`supabase/schema.sql` is the real, applied schema (Postgres/PostGIS + RLS + several `SECURITY DEFINER` RPCs:
+`vote_message`, `create_conversation_with_general_thread`, `leave_conversation`, `update_avatar_icon`, plus
+read-only geo RPCs like `nearby_conversations_by_participation`). It's written idempotently throughout
+(`if not exists` / `drop ... if exists` before `create` / `duplicate_object` exception guards) since it gets
+re-run against a project that already has some of it applied, rather than tracked via versioned migrations.
+`supabase/functions/*/index.ts` are the real, deployed Edge Functions (Supabase CLI's required layout —
+`supabase/functions/<name>/index.ts`, one `index.ts` per function directory) and is excluded from `tsc` via
+`tsconfig.json`'s `exclude` (Deno code — URL imports, the `Deno` global — don't try to typecheck it with the
+Node toolchain). `moderationAction/index.ts` exists but isn't deployed — no moderator role/UI exists
+anywhere in the app yet.
 
 ### Domain model: Conversation → Thread → Message
 

@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -10,102 +11,135 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { ConversationCategory, ConversationSummary, GeoPoint } from "../services/types";
-import * as backend from "../services/mockBackend";
+import Slider from "@react-native-community/slider";
+import { ConversationSummary, GeoPoint } from "../services/types";
+import { MIN_RADIUS_M, radiusDescriptor } from "../services/clustering";
+import * as backend from "../services/supabaseBackend";
 
 interface Props {
   visible: boolean;
   location?: GeoPoint;
   userId?: string;
-  defaultCategory?: ConversationCategory;
+  defaultRadius?: number;
   onClose: () => void;
   onCreated: (conversation: ConversationSummary) => void;
   onJoinExisting: (conversation: ConversationSummary) => void;
-  onCategoryChange?: (category: ConversationCategory) => void;
+  onRadiusChange?: (radiusM: number) => void;
 }
 
-const CATEGORIES: { key: ConversationCategory; label: string }[] = [
-  { key: "micro_location", label: "A specific spot (gate, table, section)" },
-  { key: "venue", label: "A whole venue" },
-  { key: "area", label: "A wider area / event" },
-  { key: "corridor", label: "Traffic / road" },
-];
+// A fixed set of round-number radii rather than a free-form continuous
+// range. A continuous slider fired onValueChange on every pixel of drag,
+// which (via MapScreen's live re-zoom to fit the preview circle) meant a
+// native animateToRegion call for every pixel too - twitchy in practice,
+// and more precision than anyone needs ("43m" vs "44m" isn't a real
+// choice). Slider position is the array index with step={1}, so the native
+// side only calls back into JS at each of these 9 boundaries during a
+// drag instead of continuously.
+const RADIUS_STEPS = [5, 10, 20, 40, 75, 125, 200, 350, 550, 800];
 
-// Plain-language version of each category's RADII entry (mockBackend.ts) so
-// picking a chip has a visible, immediate consequence instead of feeling
-// like it does nothing - paired with the live radius circle drawn on the
-// map underneath this sheet (see MapScreen's onCategoryChange handling).
-const CATEGORY_CAPTIONS: Record<ConversationCategory, string> = {
-  micro_location: "Reaches about 25m. Only shows once someone's zoomed in close, like a single gate or table.",
-  venue: "Reaches about 250m. Shows at a moderate zoom, covering a whole building.",
-  area: "Reaches about 800m. Shows even zoomed way out, covering a wide area or event.",
-  corridor: "Reaches about 350m. Shows zoomed out, following a road or route.",
-};
+function radiusToStepIndex(radiusM: number): number {
+  let closest = 0;
+  let closestDist = Infinity;
+  RADIUS_STEPS.forEach((r, i) => {
+    const dist = Math.abs(r - radiusM);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closest = i;
+    }
+  });
+  return closest;
+}
+
+function formatRadius(radiusM: number): string {
+  return radiusM >= 1000 ? `${(radiusM / 1000).toFixed(1)}km` : `${radiusM}m`;
+}
 
 /**
  * Create-conversation flow, triggered from the map's "Start Chat" button or
  * a long-press. Before creating, checks for nearby similar conversations
- * (services/mockBackend.suggestDuplicates) and offers to join one of those
- * instead - per Phase 1 section 3, this only happens at creation time; the
- * MVP does not auto-merge already-created duplicates. Separately, if the
- * chosen category would make this the covering/macro chat for existing,
- * more specific conversations already here (mockBackend.
- * findConversationsToSupersede), confirms that's intended before creating.
+ * (services/supabaseBackend.suggestDuplicates) and offers to join one of
+ * those instead - per Phase 1 section 3, this only happens at creation
+ * time; the MVP does not auto-merge already-created duplicates. Separately,
+ * if the chosen radius would make this the covering/macro chat for
+ * existing, smaller-radius conversations already here
+ * (supabaseBackend.findConversationsToSupersede), confirms that's intended
+ * before creating.
  */
 export function CreateConversationSheet({
   visible,
   location,
   userId,
-  defaultCategory,
+  defaultRadius,
   onClose,
   onCreated,
   onJoinExisting,
-  onCategoryChange,
+  onRadiusChange,
 }: Props) {
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState<ConversationCategory>(defaultCategory ?? "micro_location");
+  const [radiusM, setRadiusM] = useState<number>(
+    () => RADIUS_STEPS[radiusToStepIndex(defaultRadius ?? MIN_RADIUS_M)]
+  );
   const [suggestions, setSuggestions] = useState<ConversationSummary[]>([]);
   const [supersedeWarning, setSupersedeWarning] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
-  function selectCategory(next: ConversationCategory) {
-    setCategory(next);
-    onCategoryChange?.(next);
+  function selectRadius(next: number) {
+    const snapped = RADIUS_STEPS[radiusToStepIndex(next)];
+    setRadiusM(snapped);
+    onRadiusChange?.(snapped);
   }
 
-  // Re-sync to the zoom-appropriate default each time the sheet opens -
-  // otherwise a chat created while zoomed to, say, venue-level would still
-  // default to the narrowest tier and stay invisible until zoomed in much
-  // further than where it was created.
+  // Re-sync to the zoom-appropriate default when the sheet transitions from
+  // closed to open - otherwise a chat created while zoomed to, say,
+  // venue-level would still default to the smallest radius and stay
+  // invisible until zoomed in much further than where it was created.
+  //
+  // This must only fire on that open transition, not on every defaultRadius
+  // change while already open: MapScreen re-zooms to fit the live radius
+  // circle as the user drags (which changes its zoom level, which changes
+  // defaultRadius, which is passed back in here as a prop). Re-syncing on
+  // every defaultRadius change would fight the user's own drag - each tick
+  // would reset radiusM back to the zoom-derived value, which nudges the
+  // zoom again, which changes defaultRadius again, forever (this is exactly
+  // what caused the "maximum update depth exceeded" / jumpy-zoom bug).
+  const wasVisible = useRef(false);
   useEffect(() => {
-    if (visible) selectCategory(defaultCategory ?? "micro_location");
-  }, [visible, defaultCategory]);
+    if (visible && !wasVisible.current) {
+      selectRadius(defaultRadius ?? MIN_RADIUS_M);
+    }
+    wasVisible.current = visible;
+  }, [visible, defaultRadius]);
 
   async function handleCreate(forceCreate = false) {
     if (!location || !userId || !title.trim()) return;
     setLoading(true);
     try {
       if (!forceCreate) {
-        const found = await backend.suggestDuplicates(location, category, title.trim());
+        const found = await backend.suggestDuplicates(location, title.trim());
         if (found.length > 0) {
           setSuggestions(found);
           setLoading(false);
           return;
         }
-        const superseded = await backend.findConversationsToSupersede(location, category);
+        const superseded = await backend.findConversationsToSupersede(location, radiusM);
         if (superseded.length > 0) {
           setSupersedeWarning(superseded);
           setLoading(false);
           return;
         }
       }
-      const result = await backend.createConversation({ title: title.trim(), category, location, createdBy: userId });
+      const result = await backend.createConversation({ title: title.trim(), radiusM, location, createdBy: userId });
       if (result.conversation) {
         setTitle("");
         setSuggestions([]);
         setSupersedeWarning([]);
         onCreated(result.conversation);
       }
+    } catch (err) {
+      // Was silently swallowed before - a real backend call can fail
+      // (network, RLS, a bad Edge Function response) in ways the mock never
+      // could, and a failure here should never look identical to success.
+      Alert.alert("Couldn't start chat", err instanceof Error ? err.message : "Something went wrong. Try again.");
     } finally {
       setLoading(false);
     }
@@ -135,20 +169,25 @@ export function CreateConversationSheet({
           maxLength={80}
         />
 
-        <View style={styles.categoryRow}>
-          {CATEGORIES.map((c) => (
-            <Pressable
-              key={c.key}
-              onPress={() => selectCategory(c.key)}
-              style={[styles.categoryChip, category === c.key && styles.categoryChipActive]}
-            >
-              <Text style={[styles.categoryChipText, category === c.key && styles.categoryChipTextActive]}>
-                {c.label}
-              </Text>
-            </Pressable>
-          ))}
+        <View style={styles.radiusHeaderRow}>
+          <Text style={styles.radiusLabel}>{radiusDescriptor(radiusM)}</Text>
+          <Text style={styles.radiusValue}>≈ {formatRadius(radiusM)}</Text>
         </View>
-        <Text style={styles.categoryCaption}>{CATEGORY_CAPTIONS[category]}</Text>
+        <Slider
+          style={styles.slider}
+          minimumValue={0}
+          maximumValue={RADIUS_STEPS.length - 1}
+          step={1}
+          value={radiusToStepIndex(radiusM)}
+          onValueChange={(i) => selectRadius(RADIUS_STEPS[i])}
+          minimumTrackTintColor="#2C2C2A"
+          maximumTrackTintColor="#D3D1C7"
+          thumbTintColor="#2C2C2A"
+        />
+        <View style={styles.sliderEndsRow}>
+          <Text style={styles.sliderEndText}>A specific spot</Text>
+          <Text style={styles.sliderEndText}>A wide area</Text>
+        </View>
 
         {suggestions.length > 0 && (
           <View style={styles.suggestionsBox}>
@@ -215,14 +254,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,
-    marginBottom: 14,
+    marginBottom: 20,
   },
-  categoryRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
-  categoryCaption: { fontSize: 12, color: "#888780", marginBottom: 16 },
-  categoryChip: { borderWidth: 1, borderColor: "#D3D1C7", borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12 },
-  categoryChipActive: { backgroundColor: "#2C2C2A", borderColor: "#2C2C2A" },
-  categoryChipText: { fontSize: 12, color: "#444441" },
-  categoryChipTextActive: { color: "white" },
+  radiusHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
+  radiusLabel: { fontSize: 14, fontWeight: "500", color: "#2C2C2A" },
+  radiusValue: { fontSize: 13, color: "#5F5E5A" },
+  slider: { width: "100%", height: 36, marginTop: 4 },
+  sliderEndsRow: { flexDirection: "row", justifyContent: "space-between", marginTop: -4, marginBottom: 16 },
+  sliderEndText: { fontSize: 11, color: "#888780" },
   suggestionsBox: { backgroundColor: "#F1EFE8", borderRadius: 12, padding: 14 },
   suggestionsTitle: { fontSize: 13, fontWeight: "500", marginBottom: 10 },
   suggestionRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#E3E1D8" },

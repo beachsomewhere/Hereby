@@ -1,10 +1,13 @@
 import React, { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { ConfirmationType, Message } from "../services/types";
+import { Avatar } from "./Avatar";
+import { maskProfanity } from "../services/profanityFilter";
 
 interface Props {
   message: Message;
   isOwn: boolean;
+  isReported?: boolean;
   replyToMessage?: Message;
   onVote: (type: ConfirmationType) => void;
   onReport: () => void;
@@ -15,9 +18,10 @@ interface Props {
   myVote?: ConfirmationType;
 }
 
-export function MessageBubble({
+function MessageBubbleImpl({
   message,
   isOwn,
+  isReported,
   replyToMessage,
   onVote,
   onReport,
@@ -31,10 +35,24 @@ export function MessageBubble({
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const netVotes = upvotes - downvotes;
 
+  // A reported message stays in place (so the conversation doesn't visibly
+  // jump/reflow) but its content is replaced entirely - visible that
+  // something was here and hidden, without still showing what it said.
+  if (isReported) {
+    return (
+      <View style={[styles.row, isOwn && styles.rowOwn]}>
+        <View style={[styles.bubble, isOwn && styles.bubbleOwn]}>
+          <Text style={[styles.reportedText, isOwn && styles.reportedTextOwn]}>Message reported</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.row, isOwn && styles.rowOwn]}>
       <View style={[styles.bubble, isOwn && styles.bubbleOwn]}>
-        <Pressable onPress={onOpenProfile}>
+        <Pressable onPress={onOpenProfile} style={styles.authorRow}>
+          <Avatar username={message.username} avatarIcon={message.authorAvatarIcon} size={18} />
           <Text style={[styles.username, isOwn && styles.usernameOwn]}>
             {message.username} <Text style={[styles.level, isOwn && styles.levelOwn]}>· Lv {message.authorLevel}</Text>
           </Text>
@@ -43,12 +61,12 @@ export function MessageBubble({
         {replyToMessage && (
           <View style={[styles.replyQuote, isOwn && styles.replyQuoteOwn]}>
             <Text style={[styles.replyQuoteText, isOwn && styles.replyQuoteTextOwn]} numberOfLines={1}>
-              ↩ {replyToMessage.username}: {replyToMessage.body}
+              ↩ {replyToMessage.username}: {maskProfanity(replyToMessage.body)}
             </Text>
           </View>
         )}
 
-        <Text style={[styles.body, isOwn && styles.bodyOwn]}>{message.body}</Text>
+        <Text style={[styles.body, isOwn && styles.bodyOwn]}>{maskProfanity(message.body)}</Text>
 
         <View style={styles.metaRow}>
           <View style={styles.voteRow}>
@@ -92,12 +110,45 @@ export function MessageBubble({
   );
 }
 
+// Confirmed live: a message list with real volume took over 9 SECONDS to
+// re-render on a single update (VirtualizedList's own "slow to update"
+// warning), because every message bubble re-rendered on every refresh -
+// switching threads, the 6s poll, or a single vote anywhere in the list.
+// A plain React.memo wouldn't fix this on its own: getMessages/
+// getConfirmationsForMessages both return freshly-mapped objects on every
+// call (new object identity even for messages whose actual content hasn't
+// changed at all), so a reference-equality memo would never skip a
+// re-render either. This comparator checks the specific fields that affect
+// what's on screen, not object identity - callback props (onVote etc.) are
+// deliberately excluded, since renderItem always rebinds them fresh per
+// item regardless of whether anything about that message changed.
+export const MessageBubble = React.memo(MessageBubbleImpl, (prev, next) => {
+  return (
+    prev.message.id === next.message.id &&
+    prev.message.body === next.message.body &&
+    prev.message.authorLevel === next.message.authorLevel &&
+    prev.message.authorAvatarIcon === next.message.authorAvatarIcon &&
+    prev.message.username === next.message.username &&
+    prev.message.deletedAt === next.message.deletedAt &&
+    prev.isOwn === next.isOwn &&
+    prev.isReported === next.isReported &&
+    prev.replyToMessage?.id === next.replyToMessage?.id &&
+    prev.replyToMessage?.body === next.replyToMessage?.body &&
+    prev.upvotes === next.upvotes &&
+    prev.downvotes === next.downvotes &&
+    prev.myVote === next.myVote
+  );
+});
+
 const styles = StyleSheet.create({
   row: { flexDirection: "row", marginVertical: 4, paddingHorizontal: 12 },
   rowOwn: { justifyContent: "flex-end" },
   bubble: { backgroundColor: "#F1EFE8", borderRadius: 14, padding: 10, maxWidth: "82%" },
   bubbleOwn: { backgroundColor: "#2C2C2A" },
-  username: { fontSize: 11, fontWeight: "500", color: "#5F5E5A", marginBottom: 2 },
+  reportedText: { fontSize: 13, fontStyle: "italic", color: "#888780" },
+  reportedTextOwn: { color: "#B4B2A9" },
+  authorRow: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 2 },
+  username: { fontSize: 11, fontWeight: "500", color: "#5F5E5A" },
   usernameOwn: { color: "#D3D1C7" },
   level: { fontWeight: "400", color: "#888780" },
   levelOwn: { color: "#9C9A92" },

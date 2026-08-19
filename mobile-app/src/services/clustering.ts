@@ -1,5 +1,5 @@
 import Supercluster from "supercluster";
-import { ConversationCategory, ConversationSummary } from "./types";
+import { ConversationSummary } from "./types";
 import { distanceMeters } from "./geo";
 
 // Thin wrapper around supercluster (the same library used in Mapbox's own
@@ -47,33 +47,46 @@ export function deltaForZoom(zoom: number): number {
   return 360 / Math.pow(2, zoom);
 }
 
-// Minimum zoom (see zoomFromRegion, 0-20 scale) at which each category's
-// conversations become visible on the map - the wider/broader a category,
-// the further out it stays visible; more specific ones only appear once
-// you've zoomed in past them. Purely a display concern, tunable.
-export const ZOOM_VISIBILITY: Record<ConversationCategory, number> = {
-  area: 9,
-  corridor: 9,
-  venue: 12,
-  micro_location: 15,
-};
+// Chats pick an arbitrary radius (a slider, not fixed tiers) from this
+// range - small enough to mean "a specific spot" (~1000 sqft) up to a wide
+// area/event.
+export const MIN_RADIUS_M = 5;
+export const MAX_RADIUS_M = 800;
 
-export function isVisibleAtZoom(category: ConversationCategory, zoom: number): boolean {
-  return zoom >= ZOOM_VISIBILITY[category];
+// Minimum zoom (see zoomFromRegion, 0-20 scale) at which a conversation of a
+// given radius becomes visible on the map - the wider it reaches, the
+// further out it stays visible; narrower ones only appear once you've
+// zoomed in past them. Log relationship tuned to feel roughly like the old
+// fixed tiers did (25m -> ~15, 250m -> ~11, 800m -> 9), clamped to a sane
+// range. Purely a display concern, tunable.
+export function minZoomForRadius(radiusM: number): number {
+  const raw = 20.6 - 1.73 * Math.log(Math.max(1, radiusM));
+  return Math.max(7, Math.min(18, raw));
+}
+
+export function isVisibleAtZoom(radiusM: number, zoom: number): boolean {
+  return zoom >= minZoomForRadius(radiusM);
 }
 
 /**
- * Which category tier is "currently in view" at a given zoom - the most
- * specific one that's actually visible right now. Used to default a newly
- * created conversation's category to whatever you're actually looking at,
- * so it renders immediately instead of defaulting to the narrowest tier and
- * staying invisible until you zoom in far past where you created it.
+ * Inverse of minZoomForRadius - the radius that would just barely be
+ * visible at a given zoom. Used to default a newly created conversation's
+ * radius to whatever's already in view, so it renders immediately instead
+ * of defaulting to the narrowest size and staying invisible until you zoom
+ * in far past where you created it.
  */
-export function categoryForZoom(zoom: number): ConversationCategory {
-  const visible = (Object.keys(ZOOM_VISIBILITY) as ConversationCategory[])
-    .filter((cat) => zoom >= ZOOM_VISIBILITY[cat])
-    .sort((a, b) => ZOOM_VISIBILITY[b] - ZOOM_VISIBILITY[a]);
-  return visible[0] ?? "area";
+export function defaultRadiusForZoom(zoom: number): number {
+  const r = Math.exp((20.6 - zoom) / 1.73);
+  return Math.max(MIN_RADIUS_M, Math.min(MAX_RADIUS_M, r));
+}
+
+// Short, display-only size descriptor - never stored, just a friendlier
+// gloss on the raw meter figure shown alongside it.
+export function radiusDescriptor(radiusM: number): string {
+  if (radiusM <= 40) return "A specific spot";
+  if (radiusM <= 150) return "About venue-sized";
+  if (radiusM <= 400) return "A wide area";
+  return "Very wide";
 }
 
 /**
@@ -87,9 +100,8 @@ export function categoryForZoom(zoom: number): ConversationCategory {
  *
  * Call with the already zoom-filtered set (see isVisibleAtZoom); a
  * conversation is removed if some OTHER conversation in that same set has a
- * strictly more specific category and falls within its participation
- * radius (same eligibility rule as everywhere else - nesting, not mere
- * proximity).
+ * strictly smaller radius and falls within its participation radius (same
+ * eligibility rule as everywhere else - nesting, not mere proximity).
  */
 export function supersedeBroaderConversations(visible: ConversationSummary[]): ConversationSummary[] {
   return visible.filter(
@@ -97,7 +109,7 @@ export function supersedeBroaderConversations(visible: ConversationSummary[]): C
       !visible.some(
         (other) =>
           other.id !== c.id &&
-          ZOOM_VISIBILITY[other.category] > ZOOM_VISIBILITY[c.category] &&
+          other.participationRadiusM < c.participationRadiusM &&
           distanceMeters(c.location, other.location) <= c.participationRadiusM
       )
   );

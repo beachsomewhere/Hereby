@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import * as Location from "expo-location";
 import { useAppStore } from "../state/useAppStore";
-import * as backend from "../services/mockBackend";
+import * as backend from "../services/supabaseBackend";
 import * as authService from "../services/authService";
 import { validateUsername } from "../services/usernameValidation";
 
@@ -10,10 +10,9 @@ type Step = "email" | "code" | "username";
 
 /**
  * Real account creation: email OTP (Supabase Auth) followed by a mandatory,
- * validated username - no participation is possible without both. Identity
- * (auth + the users profile row) is real; everything else in the app still
- * runs against the mock backend (see mockBackend.ts#registerUser, called
- * from authService once the profile is created).
+ * validated username - no participation is possible without both. Both
+ * identity (auth + the users profile row) and everything downstream
+ * (conversations, threads, messages) are real - see supabaseBackend.ts.
  */
 export function OnboardingScreen() {
   const setCurrentUser = useAppStore((s) => s.setCurrentUser);

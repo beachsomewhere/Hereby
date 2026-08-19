@@ -11,7 +11,7 @@ import {
   View,
 } from "react-native";
 import { Thread } from "../services/types";
-import * as backend from "../services/mockBackend";
+import * as backend from "../services/supabaseBackend";
 
 interface Props {
   visible: boolean;

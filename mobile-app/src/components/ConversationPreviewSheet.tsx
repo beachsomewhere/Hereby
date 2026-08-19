@@ -2,6 +2,8 @@ import React from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { ConversationSummary } from "../services/types";
 import { heatLevel } from "../services/activityScore";
+import { radiusDescriptor } from "../services/clustering";
+import { maskProfanity } from "../services/profanityFilter";
 
 interface Props {
   conversation?: ConversationSummary;
@@ -9,13 +11,6 @@ interface Props {
   onClose: () => void;
   onJoin: (conversation: ConversationSummary) => void;
 }
-
-const CATEGORY_LABELS: Record<string, string> = {
-  micro_location: "Micro-location",
-  venue: "Venue",
-  area: "Area",
-  corridor: "Traffic / corridor",
-};
 
 /**
  * Tap-to-preview bottom sheet. Deliberately a lightweight Modal + slide-up
@@ -34,7 +29,7 @@ export function ConversationPreviewSheet({ conversation, hiddenNearby = [], onCl
         <View style={styles.handle} />
         <Text style={styles.title}>{conversation.title}</Text>
         <Text style={styles.subtitle}>
-          {CATEGORY_LABELS[conversation.category]}
+          {radiusDescriptor(conversation.participationRadiusM)}
           {conversation.venueLabel ? ` · ${conversation.venueLabel}` : ""}
         </Text>
 
@@ -55,7 +50,7 @@ export function ConversationPreviewSheet({ conversation, hiddenNearby = [], onCl
 
         {conversation.lastMessagePreview ? (
           <Text style={styles.preview} numberOfLines={2}>
-            {conversation.lastMessagePreview}
+            {maskProfanity(conversation.lastMessagePreview)}
           </Text>
         ) : (
           <Text style={styles.previewMuted}>No messages yet - be the first to say something.</Text>
