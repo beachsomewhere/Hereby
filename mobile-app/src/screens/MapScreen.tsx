@@ -162,11 +162,14 @@ export function MapScreen({ navigation }: Props) {
   }
 
   // The user is always the center of their own map - there's no reason to
-  // ever show them somewhere off to the side of it. Panning is disabled
-  // entirely (scrollEnabled=false below); this handles the other way the
-  // center can drift - pinch-zoom pivots around the touch midpoint, not
-  // necessarily the current center - by snapping back to the user's
-  // location on every gesture, keeping only the zoom level it produced.
+  // ever show them somewhere off to the side of it. scrollEnabled=false
+  // would be the obvious way to enforce that, but on-device that also
+  // disables pinch-zoom (iOS MapKit couples them more tightly than the
+  // simulator's synthetic gestures let on), so panning and zooming are
+  // both left enabled and instead corrected after the fact: any gesture -
+  // a drag, or a pinch pivoting around the touch midpoint rather than the
+  // current center - snaps back to the user's location once it completes,
+  // keeping only the zoom level it produced.
   function handleRegionChangeComplete(r: Region) {
     if (!location) {
       setRegion(r);
@@ -193,7 +196,6 @@ export function MapScreen({ navigation }: Props) {
         ref={mapRef}
         style={StyleSheet.absoluteFill}
         initialRegion={region}
-        scrollEnabled={false}
         onRegionChangeComplete={handleRegionChangeComplete}
         onLongPress={handleLongPress}
         onPress={handleMapPress}
