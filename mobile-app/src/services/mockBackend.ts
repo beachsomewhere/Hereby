@@ -53,7 +53,7 @@ export function advanceClockMinutes(minutes: number) {
 // Radii + expiration defaults, per Phase 1 sections 9 and 10.
 // ---------------------------------------------------------------------------
 export const RADII: Record<ConversationCategory, { discovery: number; participation: number; graceMin: number; ttlHours: number }> = {
-  micro_location: { discovery: 400, participation: 60, graceMin: 12, ttlHours: 5 },
+  micro_location: { discovery: 400, participation: 25, graceMin: 12, ttlHours: 5 },
   venue: { discovery: 1200, participation: 250, graceMin: 25, ttlHours: 6 },
   area: { discovery: 3000, participation: 800, graceMin: 35, ttlHours: 10 },
   corridor: { discovery: 2500, participation: 350, graceMin: 15, ttlHours: 2 },
@@ -64,10 +64,10 @@ export const RADII: Record<ConversationCategory, { discovery: number; participat
 // (~cellMeters * sqrt(2)/2) never exceeds that category's own participation
 // radius above - otherwise a chat's own creator could snap to just outside
 // their own eligibility radius. The default 120m grid has plenty of margin
-// for venue/area/corridor's much larger radii, but micro_location's 60m
-// radius needs a tighter grid.
+// for venue/area/corridor's much larger radii, but micro_location's tight
+// 25m radius needs a much tighter grid.
 const SNAP_CELL_M: Record<ConversationCategory, number> = {
-  micro_location: 40,
+  micro_location: 15,
   venue: 120,
   area: 120,
   corridor: 120,

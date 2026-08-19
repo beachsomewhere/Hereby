@@ -36,7 +36,7 @@ const CATEGORIES: { key: ConversationCategory; label: string }[] = [
 // like it does nothing - paired with the live radius circle drawn on the
 // map underneath this sheet (see MapScreen's onCategoryChange handling).
 const CATEGORY_CAPTIONS: Record<ConversationCategory, string> = {
-  micro_location: "Reaches about 60m. Only shows once someone's zoomed in close, like a single gate or table.",
+  micro_location: "Reaches about 25m. Only shows once someone's zoomed in close, like a single gate or table.",
   venue: "Reaches about 250m. Shows at a moderate zoom, covering a whole building.",
   area: "Reaches about 800m. Shows even zoomed way out, covering a wide area or event.",
   corridor: "Reaches about 350m. Shows zoomed out, following a road or route.",
