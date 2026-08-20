@@ -45,6 +45,22 @@ create index if not exists users_auth_id_idx on public.users(auth_id);
 -- before this column did.
 alter table public.users add column if not exists avatar_icon text;
 
+-- Self-attested age confirmation, required at signup (see
+-- OnboardingScreen.tsx) - like any self-attestation this doesn't stop
+-- someone determined to lie, but it's the same baseline every major social
+-- app uses and satisfies COPPA's "reasonable" bar plus what Apple review
+-- expects for UGC apps. We deliberately store only this boolean, not the
+-- birthdate itself entered client-side to derive it - the app's own
+-- data-minimization principle (see docs/privacy.html) means not persisting
+-- more than the one fact actually needed. Enforced client-side only
+-- (OnboardingScreen blocks continuing past the birthdate step if under 18) -
+-- deliberately no DB check constraint requiring true, since that would
+-- break re-running this file against a database that already has real rows
+-- (they'd all backfill to false and fail validation), and a self-attestation
+-- column isn't a real security boundary a DB constraint would meaningfully
+-- strengthen anyway.
+alter table public.users add column if not exists age_verified boolean not null default false;
+
 -- Private. No select policy grants this to authenticated users - only
 -- service-role Edge Functions read/write it. Never returned to any client.
 create table if not exists public.user_trust_scores (
@@ -415,6 +431,43 @@ drop trigger if exists trg_stamp_message_author on public.messages;
 create trigger trg_stamp_message_author
   before insert on public.messages
   for each row execute function public.stamp_message_author();
+
+-- ---------------------------------------------------------------------------
+-- Flat per-user rate limit on posting - nothing previously stopped one
+-- account from flooding a conversation. BEFORE INSERT so a violation blocks
+-- the insert outright, surfaced to the client as a normal Postgres error
+-- (same path as any other insert failure, via supabaseBackend.ts's raise()
+-- wrapper). Named to sort alphabetically before trg_stamp_message_author
+-- above, so a rate-limited request fails fast without doing that trigger's
+-- work first - Postgres runs same-table BEFORE triggers in trigger-name
+-- order.
+--
+-- Deliberately simple for v1: one flat threshold for every account, not
+-- scaled by conversation size or tiered by trust level (both real ideas -
+-- phase1-strategy.md itself calls for "tighter for new/low-trust accounts" -
+-- deferred until there's real usage data to calibrate thresholds against
+-- rather than guessing).
+-- ---------------------------------------------------------------------------
+create or replace function public.enforce_message_rate_limit() returns trigger
+language plpgsql as $$
+declare
+  v_recent_count integer;
+begin
+  select count(*) into v_recent_count
+  from public.messages
+  where user_id = new.user_id
+    and created_at > now() - interval '60 seconds';
+  if v_recent_count >= 10 then
+    raise exception 'You are sending messages too quickly. Please wait a moment and try again.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_enforce_message_rate_limit on public.messages;
+create trigger trg_enforce_message_rate_limit
+  before insert on public.messages
+  for each row execute function public.enforce_message_rate_limit();
 
 -- ---------------------------------------------------------------------------
 -- Fires the notifyNewMessage Edge Function on every new message, which

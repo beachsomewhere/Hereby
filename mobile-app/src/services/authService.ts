@@ -19,6 +19,7 @@ interface UsersRow {
   helpful_points: number;
   created_at: string;
   is_deleted: boolean;
+  age_verified: boolean;
 }
 
 function mapRow(row: UsersRow): User {
@@ -60,8 +61,12 @@ export async function verifyEmailCode(
 }
 
 export async function createProfile(
-  username: string
+  username: string,
+  ageVerified: boolean
 ): Promise<{ ok: true; user: User } | { ok: false; error: string }> {
+  if (!ageVerified) {
+    return { ok: false, error: "You must confirm you're 18 or older to use Hereby." };
+  }
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) {
     return { ok: false, error: "Not signed in - verify your email first." };
@@ -91,6 +96,7 @@ export async function createProfile(
       auth_id: authData.user.id,
       username: username.trim(),
       avatar_seed: authData.user.id,
+      age_verified: ageVerified,
     })
     .select()
     .single();

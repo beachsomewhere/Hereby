@@ -7,19 +7,42 @@ import * as authService from "../services/authService";
 import { validateUsername } from "../services/usernameValidation";
 import { registerForPushNotifications } from "../services/pushNotifications";
 
-type Step = "email" | "code" | "username";
+type Step = "birthdate" | "email" | "code" | "username";
+
+const MIN_AGE = 18;
+
+// Returns null for a calendar-invalid date (e.g. Feb 30) rather than letting
+// it silently roll over to a different date, which `new Date(y, m, d)` would
+// otherwise do.
+function computeAge(year: number, month: number, day: number): number | null {
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+  const today = new Date();
+  let age = today.getFullYear() - date.getFullYear();
+  const hadBirthdayThisYear =
+    today.getMonth() > date.getMonth() || (today.getMonth() === date.getMonth() && today.getDate() >= date.getDate());
+  if (!hadBirthdayThisYear) age -= 1;
+  return age;
+}
 
 /**
- * Real account creation: email OTP (Supabase Auth) followed by a mandatory,
- * validated username - no participation is possible without both. Both
- * identity (auth + the users profile row) and everything downstream
- * (conversations, threads, messages) are real - see supabaseBackend.ts.
+ * Real account creation: a birthdate gate, then email OTP (Supabase Auth),
+ * then a mandatory, validated username - no participation is possible
+ * without all three. Both identity (auth + the users profile row) and
+ * everything downstream (conversations, threads, messages) are real - see
+ * supabaseBackend.ts. The birthdate step comes first, deliberately, so
+ * eligibility is confirmed before any other information is collected.
  */
 export function OnboardingScreen() {
   const setCurrentUser = useAppStore((s) => s.setCurrentUser);
   const setUserLocation = useAppStore((s) => s.setUserLocation);
 
-  const [step, setStep] = useState<Step>("email");
+  const [step, setStep] = useState<Step>("birthdate");
+  const [birthMonth, setBirthMonth] = useState("");
+  const [birthDay, setBirthDay] = useState("");
+  const [birthYear, setBirthYear] = useState("");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [username, setUsername] = useState(backend.generatePseudonym());
@@ -27,6 +50,27 @@ export function OnboardingScreen() {
   const [error, setError] = useState<string>();
 
   const usernameCheck = validateUsername(username, email);
+
+  function handleSubmitBirthdate() {
+    setError(undefined);
+    const month = parseInt(birthMonth, 10);
+    const day = parseInt(birthDay, 10);
+    const year = parseInt(birthYear, 10);
+    if (!month || !day || !year || year < 1900) {
+      setError("Enter a valid date of birth.");
+      return;
+    }
+    const age = computeAge(year, month, day);
+    if (age === null) {
+      setError("That's not a valid date.");
+      return;
+    }
+    if (age < MIN_AGE) {
+      setError(`Hereby is only available to people ${MIN_AGE} and older.`);
+      return;
+    }
+    setStep("email");
+  }
 
   async function handleSendCode() {
     setLoading(true);
@@ -76,7 +120,10 @@ export function OnboardingScreen() {
         // dev-mode path rather than dead-ending.
         setError("Location permission was denied. You can enable dev mode from the map to explore with a simulated location.");
       }
-      const result = await authService.createProfile(username);
+      // Reaching this step already required passing the birthdate gate
+      // above - authService.createProfile still requires this explicitly
+      // rather than trusting an implicit "got this far" assumption.
+      const result = await authService.createProfile(username, true);
       if (result.ok) {
         setCurrentUser(result.user);
         // Best-effort - a denied permission or a simulator just means no
@@ -97,6 +144,47 @@ export function OnboardingScreen() {
       <View style={styles.content}>
         <Text style={styles.title}>Hereby</Text>
         <Text style={styles.subtitle}>See what people around you are talking about, right now.</Text>
+
+        {step === "birthdate" && (
+          <>
+            <Text style={styles.label}>Your date of birth</Text>
+            <Text style={styles.hint}>Hereby is only available to people {MIN_AGE} and older.</Text>
+            <View style={styles.birthdateRow}>
+              <TextInput
+                style={[styles.input, styles.birthdateInputSmall]}
+                value={birthMonth}
+                onChangeText={setBirthMonth}
+                keyboardType="number-pad"
+                maxLength={2}
+                placeholder="MM"
+              />
+              <TextInput
+                style={[styles.input, styles.birthdateInputSmall]}
+                value={birthDay}
+                onChangeText={setBirthDay}
+                keyboardType="number-pad"
+                maxLength={2}
+                placeholder="DD"
+              />
+              <TextInput
+                style={[styles.input, styles.birthdateInputLarge]}
+                value={birthYear}
+                onChangeText={setBirthYear}
+                keyboardType="number-pad"
+                maxLength={4}
+                placeholder="YYYY"
+              />
+            </View>
+            {error && <Text style={styles.error}>{error}</Text>}
+            <Pressable
+              style={[styles.button, (!birthMonth || !birthDay || !birthYear) && styles.buttonDisabled]}
+              onPress={handleSubmitBirthdate}
+              disabled={!birthMonth || !birthDay || !birthYear}
+            >
+              <Text style={styles.buttonText}>Continue</Text>
+            </Pressable>
+          </>
+        )}
 
         {step === "email" && (
           <>
@@ -188,6 +276,9 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 15, color: "#5F5E5A", marginTop: 8, marginBottom: 32 },
   label: { fontSize: 12, color: "#888780", marginBottom: 6 },
   input: { borderWidth: 1, borderColor: "#D3D1C7", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },
+  birthdateRow: { flexDirection: "row", gap: 10 },
+  birthdateInputSmall: { flex: 1, textAlign: "center" },
+  birthdateInputLarge: { flex: 1.5, textAlign: "center" },
   hint: { fontSize: 12, color: "#888780", marginTop: 8 },
   error: { fontSize: 13, color: "#A32D2D", marginTop: 16 },
   button: { backgroundColor: "#2C2C2A", borderRadius: 10, paddingVertical: 16, alignItems: "center", marginTop: 24 },
