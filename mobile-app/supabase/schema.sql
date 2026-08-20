@@ -452,13 +452,27 @@ create or replace function public.enforce_message_rate_limit() returns trigger
 language plpgsql as $$
 declare
   v_recent_count integer;
+  v_tenth_newest timestamptz;
+  v_wait_seconds integer;
 begin
   select count(*) into v_recent_count
   from public.messages
   where user_id = new.user_id
     and created_at > now() - interval '60 seconds';
+
   if v_recent_count >= 10 then
-    raise exception 'You are sending messages too quickly. Please wait a moment and try again.';
+    -- The 10th-most-recent message in the window is the one whose 60-second
+    -- age-out is what actually frees up a slot - report the real remaining
+    -- time until that happens, not a vague "wait a moment."
+    select created_at into v_tenth_newest
+    from public.messages
+    where user_id = new.user_id
+      and created_at > now() - interval '60 seconds'
+    order by created_at desc
+    offset 9
+    limit 1;
+    v_wait_seconds := greatest(1, ceil(extract(epoch from (v_tenth_newest + interval '60 seconds' - now())))::integer);
+    raise exception 'You are sending messages too quickly. Try again in % seconds.', v_wait_seconds;
   end if;
   return new;
 end;
