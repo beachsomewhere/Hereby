@@ -26,6 +26,7 @@ import { MessageBubble } from "../components/MessageBubble";
 import { ProfileCard } from "../components/ProfileCard";
 import { CreateThreadSheet } from "../components/CreateThreadSheet";
 import { maskProfanity } from "../services/profanityFilter";
+import { setActiveThreadId as setActivePushThreadId } from "../services/pushNotifications";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Conversation">;
 
@@ -63,6 +64,8 @@ export function ConversationScreen({ route, navigation }: Props) {
   const [voteState, setVoteState] = useState<Record<string, { upvotes: number; downvotes: number; myVote?: ConfirmationType }>>({});
   const [createThreadVisible, setCreateThreadVisible] = useState(false);
   const [threadListVisible, setThreadListVisible] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [muted, setMuted] = useState(false);
   // Slides in from the right edge over the chat rather than a fixed side
   // rail, so a long list of threads never eats into the chat's own width -
   // it's an on-demand overlay, dismissed the same way the app's other
@@ -100,6 +103,7 @@ export function ConversationScreen({ route, navigation }: Props) {
     setMessages([]);
     setVoteState({});
     setLastSeenAt({});
+    setMuted(false);
   }, [conversationId]);
 
   // Guards against overlapping poll ticks: without this, a single slow
@@ -133,6 +137,7 @@ export function ConversationScreen({ route, navigation }: Props) {
           const eligibility = await backend.checkEligibility(currentUser.id, conversationId, location);
           console.log(`[timing] checkEligibility: ${Date.now() - t1}ms`);
           setParticipantState(eligibility.state);
+          setMuted(eligibility.muted);
         } catch (err) {
           // This runs on every poll tick (every 6s) and on realtime signals,
           // not just once on mount - an Alert here would fire repeatedly on a
@@ -155,6 +160,18 @@ export function ConversationScreen({ route, navigation }: Props) {
       clearInterval(interval);
     };
   }, [refresh, conversationId]);
+
+  // Separate from refresh()'s own setOptions (title only, re-set every poll
+  // tick) - this only needs to run once, not on every 6s refresh.
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Pressable onPress={() => setMenuVisible(true)} hitSlop={10} style={styles.headerMenuButton}>
+          <Text style={styles.headerMenuButtonText}>•••</Text>
+        </Pressable>
+      ),
+    });
+  }, [navigation]);
 
   useEffect(() => {
     setLastSeenAt((prev) => {
@@ -222,6 +239,15 @@ export function ConversationScreen({ route, navigation }: Props) {
     };
   }, [refreshMessages, activeThreadId]);
 
+  // Lets pushNotifications' foreground handler suppress the in-app banner
+  // for whatever thread is actually on screen right now - cleared on
+  // unmount so navigating away doesn't keep suppressing this thread's
+  // notifications from elsewhere in the app.
+  useEffect(() => {
+    setActivePushThreadId(activeThreadId);
+    return () => setActivePushThreadId(undefined);
+  }, [activeThreadId]);
+
   async function handleSend() {
     if (!currentUser || !activeThreadId || !draft.trim() || participantState === "read_only" || participantState === "left") return;
     try {
@@ -266,6 +292,36 @@ export function ConversationScreen({ route, navigation }: Props) {
         onPress: () => {
           backend.reportTarget(currentUser.id, "message", message.id, "reported from chat");
           reportMessageInStore(message.id);
+        },
+      },
+    ]);
+  }
+
+  async function handleToggleMute() {
+    const next = !muted;
+    try {
+      await backend.setConversationMuted(conversationId, next);
+      setMuted(next);
+    } catch (err) {
+      Alert.alert("Couldn't update mute", err instanceof Error ? err.message : "Something went wrong. Try again.");
+    }
+  }
+
+  function handleLeaveConversation() {
+    if (!currentUser) return;
+    Alert.alert("Leave conversation", "You'll stop seeing new activity here unless you rejoin.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Leave",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await backend.leaveConversation(currentUser.id, conversationId);
+            setMenuVisible(false);
+            navigation.goBack();
+          } catch (err) {
+            Alert.alert("Couldn't leave", err instanceof Error ? err.message : "Something went wrong. Try again.");
+          }
         },
       },
     ]);
@@ -533,6 +589,25 @@ export function ConversationScreen({ route, navigation }: Props) {
         }}
       />
 
+      <Modal visible={menuVisible} transparent animationType="slide" onRequestClose={() => setMenuVisible(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setMenuVisible(false)} />
+        <View style={styles.menuSheet}>
+          <View style={styles.handle} />
+          <Pressable style={styles.menuRow} onPress={handleToggleMute}>
+            <Text style={styles.menuRowText}>{muted ? "Unmute notifications" : "Mute notifications"}</Text>
+          </Pressable>
+          <Pressable
+            style={styles.menuRowDanger}
+            onPress={() => {
+              setMenuVisible(false);
+              handleLeaveConversation();
+            }}
+          >
+            <Text style={styles.menuRowDangerText}>Leave conversation</Text>
+          </Pressable>
+        </View>
+      </Modal>
+
       <Modal visible={threadListVisible} transparent animationType="fade" onRequestClose={() => setThreadListVisible(false)}>
         <Pressable style={styles.threadDrawerBackdrop} onPress={() => setThreadListVisible(false)} />
         <Animated.View
@@ -590,6 +665,21 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "white" },
   banner: { backgroundColor: "#FAEEDA", padding: 10 },
   bannerText: { fontSize: 12, color: "#412402", textAlign: "center" },
+  headerMenuButton: { paddingHorizontal: 8, paddingVertical: 4 },
+  headerMenuButtonText: { fontSize: 18, color: "#2C2C2A", fontWeight: "600" },
+  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
+  menuSheet: {
+    backgroundColor: "white",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 20,
+    paddingBottom: 32,
+  },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: "#D3D1C7", alignSelf: "center", marginBottom: 16 },
+  menuRow: { paddingVertical: 14 },
+  menuRowText: { fontSize: 15, color: "#2C2C2A" },
+  menuRowDanger: { paddingVertical: 14, borderTopWidth: 1, borderTopColor: "#EDEBE3" },
+  menuRowDangerText: { fontSize: 15, color: "#A32D2D" },
   threadToggle: {
     flexDirection: "row",
     alignItems: "center",

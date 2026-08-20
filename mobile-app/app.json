@@ -6,24 +6,42 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/icon.png",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.hereby.app",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Hereby shows conversations happening around your current location. Your exact location is never shown to other users."
+        "NSLocationWhenInUseUsageDescription": "Hereby shows conversations happening around your current location. Your exact location is never shown to other users.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.hereby.app",
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FF5A3C"
       }
     },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#FF5A3C"
+        }
+      ]
+    ],
     "extra": {
-      "devModeAvailableByDefault": true
+      "devModeAvailableByDefault": true,
+      "eas": {
+        "projectId": "5208c0c8-5018-4779-a7c7-85e114dd3d5e"
+      }
     }
   }
 }

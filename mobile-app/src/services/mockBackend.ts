@@ -394,7 +394,7 @@ export async function checkEligibility(
   rawLocation: GeoPoint
 ): Promise<EligibilityResult> {
   const conv = conversations.get(conversationId);
-  if (!conv) return { state: "left", canPost: false, canRead: false };
+  if (!conv) return { state: "left", canPost: false, canRead: false, muted: false };
 
   const graceMin = graceMinutesForRadius(conv.participationRadiusM);
   const dist = distanceMeters(rawLocation, conv.location); // computed, then rawLocation is discarded
@@ -429,6 +429,11 @@ export async function checkEligibility(
     state,
     canPost: state === "inside" || state === "grace",
     canRead: true,
+    // No mute UI/flow exists in dev mode (ConversationScreen only ever
+    // imports supabaseBackend, never mockBackend, so nothing exercises this
+    // in practice) - static false just satisfies the shared EligibilityResult
+    // shape.
+    muted: false,
   };
 }
 

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { ConfirmationType, Message } from "../services/types";
 import { Avatar } from "./Avatar";
 import { maskProfanity } from "../services/profanityFilter";
@@ -31,7 +31,7 @@ function MessageBubbleImpl({
   downvotes = 0,
   myVote,
 }: Props) {
-  const [showActions, setShowActions] = useState(false);
+  const [contextMenuVisible, setContextMenuVisible] = useState(false);
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const netVotes = upvotes - downvotes;
 
@@ -50,7 +50,11 @@ function MessageBubbleImpl({
 
   return (
     <View style={[styles.row, isOwn && styles.rowOwn]}>
-      <View style={[styles.bubble, isOwn && styles.bubbleOwn]}>
+      <Pressable
+        style={[styles.bubble, isOwn && styles.bubbleOwn]}
+        onLongPress={() => setContextMenuVisible(true)}
+        delayLongPress={350}
+      >
         <Pressable onPress={onOpenProfile} style={styles.authorRow}>
           <Avatar username={message.username} avatarIcon={message.authorAvatarIcon} size={18} />
           <Text style={[styles.username, isOwn && styles.usernameOwn]}>
@@ -69,43 +73,62 @@ function MessageBubbleImpl({
         <Text style={[styles.body, isOwn && styles.bodyOwn]}>{maskProfanity(message.body)}</Text>
 
         <View style={styles.metaRow}>
-          <View style={styles.voteRow}>
-            <Pressable
-              onPress={() => onVote("upvote")}
-              hitSlop={8}
-              style={[styles.voteButton, myVote === "upvote" && styles.voteButtonUpActive]}
-            >
-              <Text style={[styles.voteButtonText, myVote === "upvote" && styles.voteButtonTextUpActive]}>▲</Text>
-            </Pressable>
-            <Text style={[styles.voteCount, isOwn && styles.voteCountOwn]}>{netVotes}</Text>
-            <Pressable
-              onPress={() => onVote("downvote")}
-              hitSlop={8}
-              style={[styles.voteButton, myVote === "downvote" && styles.voteButtonDownActive]}
-            >
-              <Text style={[styles.voteButtonText, myVote === "downvote" && styles.voteButtonTextDownActive]}>▼</Text>
+          <View style={styles.metaLeftGroup}>
+            <View style={styles.voteRow}>
+              <Pressable
+                onPress={() => onVote("upvote")}
+                hitSlop={8}
+                style={[styles.voteButton, myVote === "upvote" && styles.voteButtonUpActive]}
+              >
+                <Text style={[styles.voteButtonText, myVote === "upvote" && styles.voteButtonTextUpActive]}>▲</Text>
+              </Pressable>
+              <Text style={[styles.voteCount, isOwn && styles.voteCountOwn]}>{netVotes}</Text>
+              <Pressable
+                onPress={() => onVote("downvote")}
+                hitSlop={8}
+                style={[styles.voteButton, myVote === "downvote" && styles.voteButtonDownActive]}
+              >
+                <Text style={[styles.voteButtonText, myVote === "downvote" && styles.voteButtonTextDownActive]}>▼</Text>
+              </Pressable>
+            </View>
+            {/* Always visible - a reply is a normal, frequent interaction
+                with no real downside to a stray tap, unlike Report (which
+                only lives in the long-press menu below, since it already
+                goes through its own confirm dialog in ConversationScreen and
+                doesn't need to compete for space here). */}
+            <Pressable onPress={onReply} hitSlop={8}>
+              <Text style={[styles.replyLink, isOwn && styles.replyLinkOwn]}>↩ Reply</Text>
             </Pressable>
           </View>
           <Text style={[styles.time, isOwn && styles.timeOwn]}>{time}</Text>
         </View>
+      </Pressable>
 
-        <Pressable onPress={() => setShowActions((v) => !v)} hitSlop={8}>
-          <Text style={[styles.actionsToggle, isOwn && styles.actionsToggleOwn]}>
-            {showActions ? "Hide actions" : "..."}
-          </Text>
-        </Pressable>
-
-        {showActions && (
-          <View style={styles.actionsRow}>
-            <Pressable style={styles.actionChip} onPress={onReply}>
-              <Text style={styles.actionChipText}>Reply</Text>
+      <Modal visible={contextMenuVisible} transparent animationType="fade" onRequestClose={() => setContextMenuVisible(false)}>
+        <Pressable style={styles.contextMenuBackdrop} onPress={() => setContextMenuVisible(false)} />
+        <View style={styles.contextMenuWrap} pointerEvents="box-none">
+          <View style={styles.contextMenu}>
+            <Pressable
+              style={styles.contextMenuRow}
+              onPress={() => {
+                setContextMenuVisible(false);
+                onReply();
+              }}
+            >
+              <Text style={styles.contextMenuRowText}>Reply</Text>
             </Pressable>
-            <Pressable style={styles.actionChipDanger} onPress={onReport}>
-              <Text style={styles.actionChipDangerText}>Report</Text>
+            <Pressable
+              style={[styles.contextMenuRow, styles.contextMenuRowLast]}
+              onPress={() => {
+                setContextMenuVisible(false);
+                onReport();
+              }}
+            >
+              <Text style={styles.contextMenuRowTextDanger}>Report</Text>
             </Pressable>
           </View>
-        )}
-      </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -164,6 +187,9 @@ const styles = StyleSheet.create({
   body: { fontSize: 14, color: "#2C2C2A" },
   bodyOwn: { color: "white" },
   metaRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 6 },
+  metaLeftGroup: { flexDirection: "row", alignItems: "center", gap: 10 },
+  replyLink: { fontSize: 11, color: "#5F5E5A" },
+  replyLinkOwn: { color: "#D3D1C7" },
   voteRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   voteButton: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   voteButtonText: { fontSize: 16, color: "#B4B2A9" },
@@ -175,11 +201,11 @@ const styles = StyleSheet.create({
   voteCountOwn: { color: "#D3D1C7" },
   time: { fontSize: 10, color: "#888780" },
   timeOwn: { color: "#B4B2A9" },
-  actionsToggle: { fontSize: 11, color: "#888780", marginTop: 4 },
-  actionsToggleOwn: { color: "#B4B2A9" },
-  actionsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
-  actionChip: { borderWidth: 1, borderColor: "#D3D1C7", borderRadius: 999, paddingVertical: 4, paddingHorizontal: 10 },
-  actionChipText: { fontSize: 11, color: "#444441" },
-  actionChipDanger: { borderWidth: 1, borderColor: "#F09595", borderRadius: 999, paddingVertical: 4, paddingHorizontal: 10 },
-  actionChipDangerText: { fontSize: 11, color: "#A32D2D" },
+  contextMenuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
+  contextMenuWrap: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" },
+  contextMenu: { backgroundColor: "white", borderRadius: 12, width: 200, overflow: "hidden" },
+  contextMenuRow: { paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#EDEBE3" },
+  contextMenuRowLast: { borderBottomWidth: 0 },
+  contextMenuRowText: { fontSize: 15, color: "#2C2C2A", textAlign: "center" },
+  contextMenuRowTextDanger: { fontSize: 15, color: "#A32D2D", textAlign: "center" },
 });

@@ -130,6 +130,7 @@ export interface EligibilityResult {
   state: ParticipantState;
   canPost: boolean;
   canRead: boolean;
+  muted: boolean;
 }
 
 export interface CreateConversationInput {

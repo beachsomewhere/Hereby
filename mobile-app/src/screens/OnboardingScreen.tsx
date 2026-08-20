@@ -5,6 +5,7 @@ import { useAppStore } from "../state/useAppStore";
 import * as backend from "../services/supabaseBackend";
 import * as authService from "../services/authService";
 import { validateUsername } from "../services/usernameValidation";
+import { registerForPushNotifications } from "../services/pushNotifications";
 
 type Step = "email" | "code" | "username";
 
@@ -78,6 +79,11 @@ export function OnboardingScreen() {
       const result = await authService.createProfile(username);
       if (result.ok) {
         setCurrentUser(result.user);
+        // Best-effort - a denied permission or a simulator just means no
+        // pushes, never a reason to block the user from finishing onboarding.
+        registerForPushNotifications().catch((err) =>
+          console.error("registerForPushNotifications failed:", err instanceof Error ? err.message : err)
+        );
       } else {
         setError(result.error);
       }

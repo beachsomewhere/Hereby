@@ -107,6 +107,10 @@ serve(async (req) => {
     state = "read_only";
   }
 
+  // muted deliberately omitted from this payload - PostgREST's upsert only
+  // updates the columns present here, so an existing row's muted value is
+  // left untouched on conflict, and a brand-new row takes its column
+  // default (false).
   await supabaseAdmin.from("conversation_participants").upsert({
     conversation_id: conversationId,
     user_id: appUser.id,
@@ -121,6 +125,7 @@ serve(async (req) => {
       state,
       canPost: state === "inside" || state === "grace",
       canRead: true,
+      muted: existing?.muted ?? false,
     }),
     { headers: { "Content-Type": "application/json" } }
   );

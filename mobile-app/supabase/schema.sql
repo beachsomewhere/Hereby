@@ -417,6 +417,44 @@ create trigger trg_stamp_message_author
   for each row execute function public.stamp_message_author();
 
 -- ---------------------------------------------------------------------------
+-- Fires the notifyNewMessage Edge Function on every new message, which
+-- resolves eligible (joined, unmuted) recipients and pushes to their
+-- registered devices. Deliberately a SEPARATE trigger from
+-- trg_stamp_message_author above (BEFORE INSERT, constructs
+-- new.conversation_id mid-execution) - this one needs the fully-resolved
+-- AFTER-insert row. net.http_post is fire-and-forget/async (queues to a
+-- background worker, doesn't block the insert) - a dropped push is
+-- low-stakes here (the user still sees the message when they open the
+-- thread), so no retry logic. Row-level, since messages are never
+-- batch-inserted anywhere in this codebase.
+--
+-- Recipient-targeting logic deliberately lives in the Edge Function
+-- (TypeScript), not duplicated into this trigger's SQL - matching
+-- recomputeActivity's own rationale for keeping the heavy lifting there for
+-- testability, and it's exactly the part that'll keep changing as
+-- "advanced targeting" gets built later.
+--
+-- Fill in your real project ref and service-role key before running, same
+-- as the recompute-activity cron block below.
+-- ---------------------------------------------------------------------------
+create or replace function public.notify_new_message() returns trigger
+language plpgsql as $$
+begin
+  perform net.http_post(
+    url := 'https://<project-ref>.functions.supabase.co/notifyNewMessage',
+    headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer <service-role-key>'),
+    body := jsonb_build_object('messageId', new.id)
+  );
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_notify_new_message on public.messages;
+create trigger trg_notify_new_message
+  after insert on public.messages
+  for each row execute function public.notify_new_message();
+
+-- ---------------------------------------------------------------------------
 -- Server-side eligibility check, callable by the checkEligibility Edge
 -- Function (or directly via RPC for simple cases). Takes a raw coordinate,
 -- returns a decision, and does NOT persist the coordinate anywhere.
@@ -729,6 +767,64 @@ begin
   delete from public.conversation_participants
   where conversation_id = p_conversation_id
     and user_id = (select id from public.users where auth_id = auth.uid());
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Per-user mute, so a high-volume conversation (e.g. a 1,400-person concert
+-- chat) doesn't notification-spam someone who joined it. Same
+-- SECURITY DEFINER / auth.uid()-scoped pattern as leave_conversation above -
+-- conversation_participants has zero direct-write policies, so mutating
+-- your own row goes through an RPC, not a raw UPDATE policy hole.
+-- ---------------------------------------------------------------------------
+alter table public.conversation_participants add column if not exists muted boolean not null default false;
+
+create or replace function public.set_conversation_muted(p_conversation_id uuid, p_muted boolean)
+returns void
+language plpgsql
+security definer
+as $$
+begin
+  update public.conversation_participants
+  set muted = p_muted
+  where conversation_id = p_conversation_id
+    and user_id = (select id from public.users where auth_id = auth.uid());
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Registered Expo push tokens, one row per device install. Zero client
+-- policies (same "never exposed to the client" treatment as
+-- user_trust_scores) - reads are service-role only (the notify-on-message
+-- function), writes go through the RPC below. Unique on the token alone
+-- (not (user_id, token)) so a device re-registering under a different
+-- account reassigns the row instead of leaving a stale duplicate behind.
+-- ---------------------------------------------------------------------------
+create table if not exists public.push_tokens (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  expo_push_token text not null,
+  created_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now()
+);
+create unique index if not exists push_tokens_token_unique_idx on public.push_tokens(expo_push_token);
+create index if not exists push_tokens_user_id_idx on public.push_tokens(user_id);
+
+alter table public.push_tokens enable row level security;
+
+create or replace function public.register_push_token(p_expo_push_token text)
+returns void
+language plpgsql
+security definer
+as $$
+declare v_user_id uuid;
+begin
+  select id into v_user_id from public.users where auth_id = auth.uid();
+  if v_user_id is null then raise exception 'not authorized'; end if;
+  insert into public.push_tokens (user_id, expo_push_token)
+  values (v_user_id, p_expo_push_token)
+  on conflict (expo_push_token) do update
+    set user_id = excluded.user_id, last_seen_at = now();
 end;
 $$;
 

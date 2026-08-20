@@ -351,6 +351,19 @@ export async function leaveConversation(_userId: string, conversationId: string)
   if (error) raise(error);
 }
 
+export async function setConversationMuted(conversationId: string, muted: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_conversation_muted", {
+    p_conversation_id: conversationId,
+    p_muted: muted,
+  });
+  if (error) raise(error);
+}
+
+export async function registerPushToken(expoPushToken: string): Promise<void> {
+  const { error } = await supabase.rpc("register_push_token", { p_expo_push_token: expoPushToken });
+  if (error) raise(error);
+}
+
 // ---------------------------------------------------------------------------
 // Messages / votes / confirmations
 // ---------------------------------------------------------------------------
