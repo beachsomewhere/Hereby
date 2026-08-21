@@ -178,8 +178,24 @@ export function MapScreen({ navigation }: Props) {
   const clusterItems = useMemo(() => {
     if (!clusterIndex) return [];
     const bbox = bboxFromRegion(region);
-    return clusterIndex.getClusters(bbox, zoom);
-  }, [clusterIndex, region, zoom]);
+    // Pad the bbox by the widest currently zoom-visible conversation's own
+    // radius - confirmed live as a real bug: getClusters only includes a
+    // conversation whose plotted CENTER point falls inside the viewport
+    // bbox, but a wide conversation is relevant to anyone standing within
+    // its radius, not just someone whose view happens to contain its exact
+    // center. Without this, a wide chat's card could disappear entirely
+    // while zoomed in tight on a different, narrower nearby one, even
+    // though you're still well within the wide one's own coverage area.
+    const maxRadiusM = visibleConversations.reduce((max, c) => Math.max(max, c.participationRadiusM), 0);
+    const padDegrees = maxRadiusM / 111320;
+    const paddedBbox: [number, number, number, number] = [
+      bbox[0] - padDegrees,
+      bbox[1] - padDegrees,
+      bbox[2] + padDegrees,
+      bbox[3] + padDegrees,
+    ];
+    return clusterIndex.getClusters(paddedBbox, zoom);
+  }, [clusterIndex, region, zoom, visibleConversations]);
 
   // Deliberately ignores the long-pressed coordinate for the conversation's
   // actual origin - confirmed live as a real bug: long-pressing anywhere on
@@ -233,6 +249,18 @@ export function MapScreen({ navigation }: Props) {
   // sheet is open, since that flow deliberately drives the camera itself
   // (see the radius-fit effect below) and may be framing a long-pressed
   // spot that isn't the user's own location.
+  // Guards against a real, confirmed-live bug: animateToRegion below
+  // changes the region, which itself fires another onRegionChangeComplete -
+  // and with the ~11cm epsilon below, virtually any zoom gesture's natural
+  // imprecision re-triggers it. A fast zoom-out-then-in sequence could issue
+  // several overlapping animateToRegion calls, each interrupting the last;
+  // react-native-maps doesn't settle that cleanly, and the JS-side `region`
+  // state could end up permanently describing something other than what's
+  // actually rendered natively - which then feeds isVisibleAtZoom/
+  // getClusters the wrong viewport indefinitely (only a full reload,
+  // resetting all state fresh, recovered). This ref caps it to one
+  // in-flight recenter animation at a time.
+  const recenteringRef = useRef(false);
   function handleRegionChangeComplete(r: Region) {
     if (createVisible || !location) {
       setRegion(r);
@@ -240,8 +268,15 @@ export function MapScreen({ navigation }: Props) {
     }
     const next = { ...r, latitude: location.lat, longitude: location.lng };
     setRegion(next);
-    if (Math.abs(r.latitude - location.lat) > 1e-6 || Math.abs(r.longitude - location.lng) > 1e-6) {
+    if (
+      !recenteringRef.current &&
+      (Math.abs(r.latitude - location.lat) > 1e-6 || Math.abs(r.longitude - location.lng) > 1e-6)
+    ) {
+      recenteringRef.current = true;
       mapRef.current?.animateToRegion(next, 200);
+      setTimeout(() => {
+        recenteringRef.current = false;
+      }, 220);
     }
   }
 
