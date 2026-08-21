@@ -243,6 +243,10 @@ function toSummary(conv: Conversation, userLocation?: GeoPoint): ConversationSum
     renderSize: computeRenderSize(score, dist),
     lastMessagePreview: last ? `${last.username}: ${last.body}` : undefined,
     threadCount: convThreads.length,
+    // No UI that reads isParticipant is ever wired to mockBackend (only
+    // DevPanelScreen's dev*-prefixed exports are) - static false just
+    // satisfies the shared ConversationSummary shape.
+    isParticipant: false,
   };
 }
 

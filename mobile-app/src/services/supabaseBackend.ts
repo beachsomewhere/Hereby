@@ -61,6 +61,7 @@ interface ConversationFlatRow {
   messages_last_15min: number;
   thread_count: number;
   last_message_preview: string | null;
+  is_participant: boolean | null;
 }
 
 function mapConversation(row: ConversationFlatRow, userLocation?: GeoPoint): ConversationSummary {
@@ -87,6 +88,7 @@ function mapConversation(row: ConversationFlatRow, userLocation?: GeoPoint): Con
     renderSize: computeRenderSize(row.activity_score, dist),
     lastMessagePreview: row.last_message_preview ?? undefined,
     threadCount: row.thread_count,
+    isParticipant: !!row.is_participant,
   };
 }
 

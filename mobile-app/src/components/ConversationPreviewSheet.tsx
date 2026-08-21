@@ -64,16 +64,19 @@ export function ConversationPreviewSheet({ conversation, hiddenNearby = [], onCl
             {hiddenNearby.map((c) => (
               <Pressable key={c.id} style={styles.nearbyRow} onPress={() => onJoin(c)}>
                 <Text style={styles.nearbyRowTitle} numberOfLines={1}>
+                  {c.isParticipant ? "✓ " : ""}
                   {c.title}
                 </Text>
-                <Text style={styles.nearbyRowMeta}>{c.participantCount} participants · tap to join</Text>
+                <Text style={styles.nearbyRowMeta}>
+                  {c.participantCount} participants · {c.isParticipant ? "tap to open" : "tap to join"}
+                </Text>
               </Pressable>
             ))}
           </View>
         )}
 
         <Pressable style={styles.joinButton} onPress={() => onJoin(conversation)}>
-          <Text style={styles.joinButtonText}>Join</Text>
+          <Text style={styles.joinButtonText}>{conversation.isParticipant ? "Open chat" : "Join"}</Text>
         </Pressable>
       </View>
     </Modal>

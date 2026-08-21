@@ -281,9 +281,16 @@ export function MapScreen({ navigation }: Props) {
     if (!currentUser || !location) return;
     setSelected(undefined);
     setPreviewNearby([]);
-    const t0 = Date.now();
-    await backend.joinConversation(currentUser.id, conversation.id, location);
-    console.log(`[timing] joinConversation: ${Date.now() - t0}ms`);
+    // Already a participant (conversation.isParticipant, computed
+    // server-side) - go straight in. ConversationScreen's own refresh()
+    // calls checkEligibility on mount regardless, so re-calling it here
+    // first would just be a redundant round-trip before the same work
+    // happens again.
+    if (!conversation.isParticipant) {
+      const t0 = Date.now();
+      await backend.joinConversation(currentUser.id, conversation.id, location);
+      console.log(`[timing] joinConversation: ${Date.now() - t0}ms`);
+    }
     navigation.navigate("Conversation", { conversationId: conversation.id });
   }
 

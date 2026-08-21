@@ -599,6 +599,10 @@ do $$ begin
   alter type public.conversation_flat add attribute last_message_preview text;
 exception when duplicate_column then null;
 end $$;
+do $$ begin
+  alter type public.conversation_flat add attribute is_participant boolean;
+exception when duplicate_column then null;
+end $$;
 
 -- Every conversation_flat-returning query below computes thread_count and
 -- last_message_preview the same way: a scalar subquery each, matching
@@ -618,7 +622,12 @@ as $$
          (select count(*) from public.threads t where t.conversation_id = c.id),
          (select m.username || ': ' || m.body from public.messages m
             where m.conversation_id = c.id and m.deleted_at is null
-            order by m.created_at desc limit 1)
+            order by m.created_at desc limit 1),
+         exists (
+           select 1 from public.conversation_participants cp
+           join public.users u on u.id = cp.user_id
+           where cp.conversation_id = c.id and u.auth_id = auth.uid() and cp.state in ('inside', 'grace')
+         )
   from public.conversations c
   where c.status not in ('archived', 'deleted')
     and ST_DWithin(c.location, ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography, c.discovery_radius_m);
@@ -637,7 +646,12 @@ as $$
          (select count(*) from public.threads t where t.conversation_id = c.id),
          (select m.username || ': ' || m.body from public.messages m
             where m.conversation_id = c.id and m.deleted_at is null
-            order by m.created_at desc limit 1)
+            order by m.created_at desc limit 1),
+         exists (
+           select 1 from public.conversation_participants cp
+           join public.users u on u.id = cp.user_id
+           where cp.conversation_id = c.id and u.auth_id = auth.uid() and cp.state in ('inside', 'grace')
+         )
   from public.conversations c
   where c.status not in ('archived', 'deleted')
     and ST_DWithin(c.location, ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography, c.participation_radius_m);
@@ -657,7 +671,12 @@ as $$
          (select count(*) from public.threads t where t.conversation_id = c.id),
          (select m.username || ': ' || m.body from public.messages m
             where m.conversation_id = c.id and m.deleted_at is null
-            order by m.created_at desc limit 1)
+            order by m.created_at desc limit 1),
+         exists (
+           select 1 from public.conversation_participants cp
+           join public.users u on u.id = cp.user_id
+           where cp.conversation_id = c.id and u.auth_id = auth.uid() and cp.state in ('inside', 'grace')
+         )
   from public.conversations c
   where c.status not in ('archived', 'deleted')
     and ST_DWithin(c.location, ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography, c.discovery_radius_m)
@@ -680,7 +699,12 @@ as $$
          (select count(*) from public.threads t where t.conversation_id = c.id),
          (select m.username || ': ' || m.body from public.messages m
             where m.conversation_id = c.id and m.deleted_at is null
-            order by m.created_at desc limit 1)
+            order by m.created_at desc limit 1),
+         exists (
+           select 1 from public.conversation_participants cp
+           join public.users u on u.id = cp.user_id
+           where cp.conversation_id = c.id and u.auth_id = auth.uid() and cp.state in ('inside', 'grace')
+         )
   from public.conversations c
   where c.id = p_id;
 $$;
@@ -701,7 +725,12 @@ as $$
          (select count(*) from public.threads t where t.conversation_id = c.id),
          (select m.username || ': ' || m.body from public.messages m
             where m.conversation_id = c.id and m.deleted_at is null
-            order by m.created_at desc limit 1)
+            order by m.created_at desc limit 1),
+         exists (
+           select 1 from public.conversation_participants cp
+           join public.users u on u.id = cp.user_id
+           where cp.conversation_id = c.id and u.auth_id = auth.uid() and cp.state in ('inside', 'grace')
+         )
   from public.conversations c
   where c.status not in ('archived', 'deleted')
     and c.participation_radius_m < p_radius_m

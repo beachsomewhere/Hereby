@@ -83,6 +83,10 @@ export interface ConversationSummary extends Conversation {
   renderSize: number;
   lastMessagePreview?: string;
   threadCount: number;
+  // Whether the current user already has an active (inside/grace)
+  // participant row here - computed server-side (auth.uid()), so it's
+  // correct without needing to have ever opened this conversation before.
+  isParticipant: boolean;
 }
 
 export interface Message {

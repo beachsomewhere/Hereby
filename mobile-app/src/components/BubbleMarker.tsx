@@ -34,7 +34,18 @@ export function BubbleMarker({ conversation, onPress }: Props) {
       onPress={() => onPress(conversation)}
       tracksViewChanges={false}
     >
-      <View style={[styles.card, { width, backgroundColor: colors.bg, borderColor: colors.border }]}>
+      <View
+        style={[
+          styles.card,
+          { width, backgroundColor: colors.bg, borderColor: colors.border },
+          conversation.isParticipant && styles.cardJoined,
+        ]}
+      >
+        {conversation.isParticipant && (
+          <View style={[styles.joinedBadge, { backgroundColor: colors.border }]}>
+            <Text style={styles.joinedBadgeText}>✓</Text>
+          </View>
+        )}
         <Text style={[styles.title, { color: colors.text }]} numberOfLines={2}>
           {conversation.title}
         </Text>
@@ -52,6 +63,26 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 8,
     paddingHorizontal: 10,
+  },
+  cardJoined: {
+    borderWidth: 2.5,
+  },
+  joinedBadge: {
+    position: "absolute",
+    top: -8,
+    right: -8,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "white",
+  },
+  joinedBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "white",
   },
   title: {
     fontSize: 12,
