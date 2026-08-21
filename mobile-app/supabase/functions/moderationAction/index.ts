@@ -1,11 +1,12 @@
-// Supabase Edge Function (Deno) - stub / reference implementation.
+// Supabase Edge Function (Deno).
 //
 // Single entry point for every moderator action (lock a conversation,
 // delete a message, suspend/ban a user). Writes an append-only audit log
 // row for every call, which is what backs the appeals flow described in
 // Phase 1 section 12 - moderators never mutate content tables directly from
 // the client, only through this function, so there is always a record of
-// who did what and why.
+// who did what and why. Called from web/src/app/admin - see is_moderator()
+// in schema.sql for the matching read-side role check.
 
 import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -37,13 +38,10 @@ serve(async (req) => {
 
   const { data: moderator } = await supabase
     .from("users")
-    .select("id")
+    .select("id, role")
     .eq("auth_id", authUser.id)
     .single();
-  // Production would also check a moderator/role table here - omitted from
-  // this stub since role verification is explicitly out of scope for MVP
-  // (Phase 1 section 3).
-  if (!moderator) return new Response("Forbidden", { status: 403 });
+  if (!moderator || moderator.role !== "moderator") return new Response("Forbidden", { status: 403 });
 
   const { action, targetType, targetId, reason, reportId } = (await req.json()) as RequestBody;
 

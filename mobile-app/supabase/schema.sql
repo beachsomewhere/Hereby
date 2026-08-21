@@ -1090,3 +1090,79 @@ end $$;
 --     headers := '{"Authorization": "Bearer <service-role-key>"}'::jsonb
 --   );
 -- $$);
+
+-- ---------------------------------------------------------------------------
+-- Admin dashboard (web/admin) - moderator role + read surface.
+-- ---------------------------------------------------------------------------
+
+-- Two values only - promotion is manual SQL for v1 (no self-serve invite
+-- UI), so there's no meaningful distinction yet between "the owner" and "a
+-- moderator someone else promoted." Add a third value later only if tiered
+-- admin permissions become a real need.
+do $$ begin
+  create type user_role as enum ('user', 'moderator');
+exception when duplicate_object then null;
+end $$;
+alter table public.users add column if not exists role user_role not null default 'user';
+
+-- Promotion, v1: no RPC, no UI - run directly against the project once you
+-- have the account's auth_id:
+--   update public.users set role = 'moderator' where auth_id = '<uuid>';
+
+-- moderation_actions never had RLS enabled - same class of gap `reports`
+-- had before it was fixed above, except this one was live and unfixed: an
+-- append-only moderator audit log (who took what action against whom) was
+-- readable/writable by any authenticated client via PostgREST default
+-- grants. Zero client policies, same "service role/SECURITY DEFINER only"
+-- treatment as push_tokens - written only by the moderationAction Edge
+-- Function (service role), read only via the admin RPCs below.
+alter table public.moderation_actions enable row level security;
+
+create or replace function public.is_moderator() returns boolean
+language sql stable
+security definer
+as $$
+  select exists (
+    select 1 from public.users
+    where auth_id = auth.uid() and role = 'moderator' and not is_deleted
+  );
+$$;
+
+create or replace function public.admin_list_reports(p_status report_status default 'open')
+returns setof public.reports
+language plpgsql
+security definer
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'not authorized';
+  end if;
+  return query select * from public.reports where status = p_status order by created_at desc;
+end;
+$$;
+
+create or replace function public.admin_stats()
+returns table (
+  total_users bigint,
+  total_conversations bigint,
+  active_conversations bigint,
+  total_messages bigint,
+  messages_last_24h bigint,
+  new_users_last_7d bigint
+)
+language plpgsql
+security definer
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'not authorized';
+  end if;
+  return query select
+    (select count(*) from public.users where not is_deleted),
+    (select count(*) from public.conversations where status <> 'deleted'),
+    (select count(*) from public.conversations where status = 'active'),
+    (select count(*) from public.messages where deleted_at is null),
+    (select count(*) from public.messages where created_at > now() - interval '24 hours' and deleted_at is null),
+    (select count(*) from public.users where created_at > now() - interval '7 days' and not is_deleted);
+end;
+$$;
