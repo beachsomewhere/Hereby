@@ -501,17 +501,52 @@ create trigger trg_enforce_message_rate_limit
 -- testability, and it's exactly the part that'll keep changing as
 -- "advanced targeting" gets built later.
 --
--- Fill in your real project ref and service-role key before running, same
--- as the recompute-activity cron block below.
+-- The service-role key lives in Supabase Vault (set once, outside this
+-- file: select vault.create_secret('<real-key>', 'notify_new_message_
+-- service_key')) rather than inline here - confirmed live as a real
+-- failure mode: this file gets re-run in full periodically (it's the
+-- single source of truth, idempotent by design), and an inline placeholder
+-- silently reverts any manual "fill in the real key" edit every time,
+-- exactly what happened here. Referencing the secret by name survives any
+-- number of re-runs. The project ref itself isn't secret, so it stays
+-- hardcoded directly.
+--
+-- SECURITY DEFINER: vault.decrypted_secrets is deliberately locked down
+-- (it decrypts secrets to plaintext), and messages are inserted directly by
+-- the client's own `authenticated` role - without this, the vault lookup
+-- itself fails with "permission denied for schema vault", proving the same
+-- point the exception handler below exists for: notification delivery
+-- (including looking up its own credentials) must never be able to break
+-- message sending. That's why the vault lookup is ALSO inside the
+-- exception-wrapped block now, not just the net.http_post call - confirmed
+-- live that a failure anywhere before that inner BEGIN still propagated up
+-- and failed the whole message INSERT.
+--
+-- net.http_post itself validates its URL argument SYNCHRONOUSLY and raises
+-- if malformed - the other confirmed-live reason this whole block needs its
+-- own exception handler, not just defensive plpgsql style.
 -- ---------------------------------------------------------------------------
 create or replace function public.notify_new_message() returns trigger
-language plpgsql as $$
+language plpgsql
+security definer
+as $$
+declare
+  v_service_key text;
 begin
-  perform net.http_post(
-    url := 'https://<project-ref>.functions.supabase.co/notifyNewMessage',
-    headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer <service-role-key>'),
-    body := jsonb_build_object('messageId', new.id)
-  );
+  begin
+    select decrypted_secret into v_service_key
+    from vault.decrypted_secrets
+    where name = 'notify_new_message_service_key';
+
+    perform net.http_post(
+      url := 'https://fuhdxvyqahwmikpgiikk.functions.supabase.co/notifyNewMessage',
+      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_service_key),
+      body := jsonb_build_object('messageId', new.id)
+    );
+  exception when others then
+    raise warning 'notify_new_message failed: %', sqlerrm;
+  end;
+
   return new;
 end;
 $$;
