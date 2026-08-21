@@ -60,6 +60,20 @@ export async function verifyEmailCode(
   return { ok: true };
 }
 
+// Checks whether the just-verified auth account already has a profile - e.g.
+// local session storage was lost (Expo Go scopes it per project slug, or a
+// fresh install) but the account itself, tied to the verified email, still
+// exists server-side. Lets OnboardingScreen skip straight past the
+// birthdate/username steps for a returning user instead of showing a
+// username field whose value would silently be discarded anyway (see
+// createProfile's own existing-row check below).
+export async function getExistingProfile(): Promise<User | undefined> {
+  const { data: authData } = await supabase.auth.getUser();
+  if (!authData.user) return undefined;
+  const { data } = await supabase.from("users").select().eq("auth_id", authData.user.id).maybeSingle();
+  return data ? mapRow(data as UsersRow) : undefined;
+}
+
 export async function createProfile(
   username: string,
   ageVerified: boolean

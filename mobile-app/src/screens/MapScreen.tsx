@@ -146,11 +146,11 @@ export function MapScreen({ navigation }: Props) {
   const zoom = zoomFromRegion(region.longitudeDelta);
 
   // Zoom-visible, then superseded: a broader conversation (e.g. "airport
-  // wide") only shows up until something more specific covering the same
-  // spot is also zoom-visible, at which point it transforms into that one
-  // instead of showing alongside it. Zooming back out drops the more
-  // specific one out of the zoom-visible set again, so the broader one
-  // naturally reappears.
+  // wide") only disappears in favor of narrower ones nested inside it when
+  // there's a genuine CLUSTER of several of them - a single lone nested
+  // conversation is a separate, independently useful chat (e.g. one house
+  // inside a block-wide chat), not a stand-in the wide one should vanish
+  // for. See supersedeBroaderConversations for the exact threshold.
   const visibleConversations = useMemo(() => {
     const zoomVisible = conversations.filter((c) => isVisibleAtZoom(c.participationRadiusM, zoom));
     return supersedeBroaderConversations(zoomVisible);
@@ -181,10 +181,19 @@ export function MapScreen({ navigation }: Props) {
     return clusterIndex.getClusters(bbox, zoom);
   }, [clusterIndex, region, zoom]);
 
-  function handleLongPress(e: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) {
-    const { latitude, longitude } = e.nativeEvent.coordinate;
+  // Deliberately ignores the long-pressed coordinate for the conversation's
+  // actual origin - confirmed live as a real bug: long-pressing anywhere on
+  // the visible map (including somewhere the user isn't physically at) let
+  // them create a conversation there, which then immediately showed as
+  // read-only since checkEligibility correctly found them outside their own
+  // new chat's radius. A conversation's origin must always be the user's
+  // real current location, same rule as handleStartChatPress below - the
+  // long-press gesture still opens the create sheet, it just can't be used
+  // to place a chat somewhere other than where the user actually is.
+  function handleLongPress() {
+    if (!location) return;
     preOpenRegionRef.current = region;
-    setCreateLocation({ lat: latitude, lng: longitude });
+    setCreateLocation(location);
     setCreateVisible(true);
   }
 
@@ -328,12 +337,13 @@ export function MapScreen({ navigation }: Props) {
           const [lng, lat] = item.geometry.coordinates;
           const props = item.properties as any;
           if (props.cluster) {
-            // Every conversation here has already survived
-            // supersedeBroaderConversations, so a cluster is always genuine
-            // siblings (no member covers the others) - just several
-            // same-ish-tier chats rendering close together. Tapping zooms
-            // in rather than opening one, since it isn't any single one of
-            // them.
+            // Everything here survived supersedeBroaderConversations, but
+            // that only removes a wider chat when 2+ narrower ones are
+            // nested inside it - a wide chat with a single nested narrower
+            // one both survive, and can still end up clustered together
+            // here if they're close enough on screen. Either way, tapping
+            // zooms in rather than opening one directly, since it isn't
+            // unambiguously any single one of them.
             const leaves = (clusterIndex?.getLeaves(props.cluster_id, Infinity) ?? []).map(
               (leaf) => (leaf.properties as any).conversation as ConversationSummary
             );

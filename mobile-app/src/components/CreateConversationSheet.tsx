@@ -110,8 +110,17 @@ export function CreateConversationSheet({
     wasVisible.current = visible;
   }, [visible, defaultRadius]);
 
+  // The `loading` state disables the button, but that alone doesn't stop a
+  // double-tap that lands before React re-renders with the disabled state -
+  // confirmed live as a real duplicate-conversation bug (two identical
+  // conversations created ~1.5s apart from what should have been one tap).
+  // A ref is checked synchronously, before any state update or async work,
+  // so a second tap in the same event-loop tick can't possibly get through.
+  const creatingRef = useRef(false);
   async function handleCreate(forceCreate = false) {
     if (!location || !userId || !title.trim()) return;
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     setLoading(true);
     try {
       if (!forceCreate) {
@@ -142,6 +151,7 @@ export function CreateConversationSheet({
       Alert.alert("Couldn't start chat", err instanceof Error ? err.message : "Something went wrong. Try again.");
     } finally {
       setLoading(false);
+      creatingRef.current = false;
     }
   }
 

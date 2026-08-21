@@ -90,29 +90,35 @@ export function radiusDescriptor(radiusM: number): string {
 }
 
 /**
- * A broader conversation should only represent a spot until something more
- * specific covering the same spot becomes zoom-visible too - then it should
- * transform into that more specific one, not keep showing alongside it.
- * Zooming back out makes the more specific one drop out of `visible` again
- * (its own threshold no longer met), so the broader one naturally
- * reappears. If nothing more specific exists yet, the broader one just
- * keeps showing - "show whatever is available."
+ * A broader conversation is only redundant with narrower ones nested inside
+ * it when there's a genuine CLUSTER of several of them - one lone narrower
+ * conversation (e.g. a single house's chat inside a block-wide one) is a
+ * separate, independently useful conversation, not a stand-in the wide one
+ * should disappear in favor of. Confirmed live: with the old "any nested
+ * narrower conversation supersedes" rule, a legitimately separate
+ * block-level chat became permanently invisible the moment a single nested
+ * house chat also became zoom-visible, with no way back short of zooming
+ * out past the wide chat's own threshold too.
+ *
+ * Zooming back out drops the narrower ones out of `visible` again (their
+ * own threshold no longer met), so the broader one naturally reappears
+ * regardless of the count involved.
  *
  * Call with the already zoom-filtered set (see isVisibleAtZoom); a
- * conversation is removed if some OTHER conversation in that same set has a
- * strictly smaller radius and falls within its participation radius (same
- * eligibility rule as everywhere else - nesting, not mere proximity).
+ * conversation is removed only if 2+ OTHER conversations in that same set
+ * have a strictly smaller radius and fall within its participation radius
+ * (same eligibility rule as everywhere else - nesting, not mere proximity).
  */
 export function supersedeBroaderConversations(visible: ConversationSummary[]): ConversationSummary[] {
-  return visible.filter(
-    (c) =>
-      !visible.some(
-        (other) =>
-          other.id !== c.id &&
-          other.participationRadiusM < c.participationRadiusM &&
-          distanceMeters(c.location, other.location) <= c.participationRadiusM
-      )
-  );
+  return visible.filter((c) => {
+    const nestedNarrower = visible.filter(
+      (other) =>
+        other.id !== c.id &&
+        other.participationRadiusM < c.participationRadiusM &&
+        distanceMeters(c.location, other.location) <= c.participationRadiusM
+    );
+    return nestedNarrower.length < 2;
+  });
 }
 
 /** Best-guess label for a cluster: the most common venueLabel among its points, falling back to undefined. */

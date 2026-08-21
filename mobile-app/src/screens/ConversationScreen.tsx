@@ -113,7 +113,18 @@ export function ConversationScreen({ route, navigation }: Props) {
   // live as the source of request latency that climbed continuously the
   // longer a chat stayed open and only reset on a full reload.
   const refreshInFlightRef = useRef(false);
+  // Set the instant the user confirms Leave (handleLeaveConversation below),
+  // before the RPC call or navigation.goBack() even happen. Confirmed live:
+  // leaving deletes this user's conversation_participants row, which fires
+  // recompute_participant_count, which UPDATEs the conversations row, which
+  // fires this SAME still-mounted screen's own subscribeToConversation
+  // listener (navigation.goBack() doesn't unmount instantly) - without this
+  // guard, that triggers one more refresh() -> checkEligibility() that
+  // silently re-inserts the user as a participant before the screen finishes
+  // closing, undoing the leave entirely.
+  const hasLeftRef = useRef(false);
   const refresh = useCallback(async () => {
+    if (hasLeftRef.current) return;
     if (refreshInFlightRef.current) return;
     refreshInFlightRef.current = true;
     try {
@@ -315,11 +326,13 @@ export function ConversationScreen({ route, navigation }: Props) {
         text: "Leave",
         style: "destructive",
         onPress: async () => {
+          hasLeftRef.current = true;
           try {
             await backend.leaveConversation(currentUser.id, conversationId);
             setMenuVisible(false);
             navigation.goBack();
           } catch (err) {
+            hasLeftRef.current = false; // the leave itself failed - resume normal polling
             Alert.alert("Couldn't leave", err instanceof Error ? err.message : "Something went wrong. Try again.");
           }
         },

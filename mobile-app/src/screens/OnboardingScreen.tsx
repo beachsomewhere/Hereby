@@ -6,6 +6,7 @@ import * as backend from "../services/supabaseBackend";
 import * as authService from "../services/authService";
 import { validateUsername } from "../services/usernameValidation";
 import { registerForPushNotifications } from "../services/pushNotifications";
+import { User } from "../services/types";
 
 type Step = "birthdate" | "email" | "code" | "username";
 
@@ -87,15 +88,49 @@ export function OnboardingScreen() {
     }
   }
 
+  // Shared by both the "brand new account" and "returning account, local
+  // session was lost" paths below - requests location, signs the user in,
+  // and registers for push, so neither path has to duplicate it.
+  async function finishSignIn(user: User) {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status === "granted") {
+      const pos = await Location.getCurrentPositionAsync({});
+      setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    } else {
+      // MVP behavior: the app is unusable without location, since the map
+      // *is* the app. Still let them proceed to see the empty-state /
+      // dev-mode path rather than dead-ending.
+      setError("Location permission was denied. You can enable dev mode from the map to explore with a simulated location.");
+    }
+    setCurrentUser(user);
+    // Best-effort - a denied permission or a simulator just means no
+    // pushes, never a reason to block the user from finishing onboarding.
+    registerForPushNotifications().catch((err) =>
+      console.error("registerForPushNotifications failed:", err instanceof Error ? err.message : err)
+    );
+  }
+
   async function handleVerifyCode() {
     setLoading(true);
     setError(undefined);
     try {
       const result = await authService.verifyEmailCode(email, code);
-      if (result.ok) {
-        setStep("username");
-      } else {
+      if (!result.ok) {
         setError(result.error);
+        return;
+      }
+      // This email may already have a profile - local session storage lost
+      // (Expo Go scopes it per project slug), a fresh install, a different
+      // device. Sign straight in with the real stored username rather than
+      // showing a username step whose value would be silently discarded
+      // anyway (createProfile already returns the existing row if one
+      // exists) - previously this showed a fresh random suggestion in the
+      // username field with no indication it wouldn't actually be used.
+      const existingUser = await authService.getExistingProfile();
+      if (existingUser) {
+        await finishSignIn(existingUser);
+      } else {
+        setStep("username");
       }
     } finally {
       setLoading(false);
@@ -110,27 +145,12 @@ export function OnboardingScreen() {
     setLoading(true);
     setError(undefined);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === "granted") {
-        const pos = await Location.getCurrentPositionAsync({});
-        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      } else {
-        // MVP behavior: the app is unusable without location, since the map
-        // *is* the app. Still let them proceed to see the empty-state /
-        // dev-mode path rather than dead-ending.
-        setError("Location permission was denied. You can enable dev mode from the map to explore with a simulated location.");
-      }
       // Reaching this step already required passing the birthdate gate
       // above - authService.createProfile still requires this explicitly
       // rather than trusting an implicit "got this far" assumption.
       const result = await authService.createProfile(username, true);
       if (result.ok) {
-        setCurrentUser(result.user);
-        // Best-effort - a denied permission or a simulator just means no
-        // pushes, never a reason to block the user from finishing onboarding.
-        registerForPushNotifications().catch((err) =>
-          console.error("registerForPushNotifications failed:", err instanceof Error ? err.message : err)
-        );
+        await finishSignIn(result.user);
       } else {
         setError(result.error);
       }
