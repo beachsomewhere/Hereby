@@ -11,7 +11,7 @@ import { DevPanelScreen } from "../screens/DevPanelScreen";
 export type RootStackParamList = {
   Onboarding: undefined;
   Map: undefined;
-  Conversation: { conversationId: string };
+  Conversation: { conversationId: string; threadId?: string };
   DevPanel: undefined;
 };
 

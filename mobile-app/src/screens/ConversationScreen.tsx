@@ -42,7 +42,7 @@ const STATE_BANNER: Record<ParticipantState, string | undefined> = {
 };
 
 export function ConversationScreen({ route, navigation }: Props) {
-  const { conversationId } = route.params;
+  const { conversationId, threadId: routeThreadId } = route.params;
   const headerHeight = useHeaderHeight();
   const currentUser = useAppStore((s) => s.currentUser);
   const setCurrentUser = useAppStore((s) => s.setCurrentUser);
@@ -96,15 +96,22 @@ export function ConversationScreen({ route, navigation }: Props) {
   // outright (wrong conversation_id derived from that stale thread), where
   // the mock had no such check and would have silently posted into the
   // wrong place.
+  //
+  // Also keyed on routeThreadId (set when arriving via a push notification
+  // tap - see pushNotifications.ts) so tapping a second notification for a
+  // different thread in a conversation already on screen jumps there too,
+  // not just on first mount. Seeding activeThreadId here, before refresh()
+  // runs, means refresh()'s own `current ?? ...` default-to-General logic
+  // never overrides it.
   useEffect(() => {
     setConversation(undefined);
     setThreads([]);
-    setActiveThreadId(undefined);
+    setActiveThreadId(routeThreadId);
     setMessages([]);
     setVoteState({});
     setLastSeenAt({});
     setMuted(false);
-  }, [conversationId]);
+  }, [conversationId, routeThreadId]);
 
   // Guards against overlapping poll ticks: without this, a single slow
   // round-trip (checkEligibility especially - a multi-stage edge function)
