@@ -17,7 +17,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
   } = await supabase.auth.getUser();
   if (!user) redirect("/admin/login");
 
-  const { data: isModerator } = await supabase.rpc("is_moderator");
+  const { data: isModerator, error } = await supabase.rpc("is_moderator");
+  // A schema-side problem (function/column missing, e.g. schema.sql's admin
+  // section not applied yet) would otherwise look identical to "you're not
+  // a moderator" - surface it distinctly instead of silently redirecting.
+  if (error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#FAF9F5] px-4">
+        <p className="max-w-md text-sm text-[#A32D2D]">
+          Couldn&rsquo;t check moderator access: {error.message}. Has schema.sql&rsquo;s admin dashboard
+          section been applied yet?
+        </p>
+      </div>
+    );
+  }
   if (!isModerator) redirect("/admin/not-authorized");
 
   return (
