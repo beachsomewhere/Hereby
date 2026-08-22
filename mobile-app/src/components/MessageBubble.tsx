@@ -56,10 +56,18 @@ function MessageBubbleImpl({
         delayLongPress={350}
       >
         <Pressable onPress={onOpenProfile} style={styles.authorRow}>
-          <Avatar username={message.username} avatarIcon={message.authorAvatarIcon} size={18} />
-          <Text style={[styles.username, isOwn && styles.usernameOwn]}>
-            {message.username} <Text style={[styles.level, isOwn && styles.levelOwn]}>· Lv {message.authorLevel}</Text>
-          </Text>
+          <View style={styles.authorRowLeft}>
+            <Avatar username={message.username} avatarIcon={message.authorAvatarIcon} size={18} />
+            <Text style={[styles.username, isOwn && styles.usernameOwn]}>
+              {message.username} <Text style={[styles.level, isOwn && styles.levelOwn]}>· Lv {message.authorLevel}</Text>
+            </Text>
+          </View>
+          {/* Moved here from the actions row below, where it had no
+              dedicated space of its own and ran directly into "Reply" with
+              no visible gap between them - confirmed live as "Reply1:07 PM"
+              reading like one word. There's natural room for it here,
+              opposite the username. */}
+          <Text style={[styles.time, isOwn && styles.timeOwn]}>{time}</Text>
         </Pressable>
 
         {replyToMessage && (
@@ -73,34 +81,31 @@ function MessageBubbleImpl({
         <Text style={[styles.body, isOwn && styles.bodyOwn]}>{maskProfanity(message.body)}</Text>
 
         <View style={styles.metaRow}>
-          <View style={styles.metaLeftGroup}>
-            <View style={styles.voteRow}>
-              <Pressable
-                onPress={() => onVote("upvote")}
-                hitSlop={8}
-                style={[styles.voteButton, myVote === "upvote" && styles.voteButtonUpActive]}
-              >
-                <Text style={[styles.voteButtonText, myVote === "upvote" && styles.voteButtonTextUpActive]}>▲</Text>
-              </Pressable>
-              <Text style={[styles.voteCount, isOwn && styles.voteCountOwn]}>{netVotes}</Text>
-              <Pressable
-                onPress={() => onVote("downvote")}
-                hitSlop={8}
-                style={[styles.voteButton, myVote === "downvote" && styles.voteButtonDownActive]}
-              >
-                <Text style={[styles.voteButtonText, myVote === "downvote" && styles.voteButtonTextDownActive]}>▼</Text>
-              </Pressable>
-            </View>
-            {/* Always visible - a reply is a normal, frequent interaction
-                with no real downside to a stray tap, unlike Report (which
-                only lives in the long-press menu below, since it already
-                goes through its own confirm dialog in ConversationScreen and
-                doesn't need to compete for space here). */}
-            <Pressable onPress={onReply} hitSlop={8}>
-              <Text style={[styles.replyLink, isOwn && styles.replyLinkOwn]}>↩ Reply</Text>
+          <View style={styles.voteRow}>
+            <Pressable
+              onPress={() => onVote("upvote")}
+              hitSlop={8}
+              style={[styles.voteButton, myVote === "upvote" && styles.voteButtonUpActive]}
+            >
+              <Text style={[styles.voteButtonText, myVote === "upvote" && styles.voteButtonTextUpActive]}>▲</Text>
+            </Pressable>
+            <Text style={[styles.voteCount, isOwn && styles.voteCountOwn]}>{netVotes}</Text>
+            <Pressable
+              onPress={() => onVote("downvote")}
+              hitSlop={8}
+              style={[styles.voteButton, myVote === "downvote" && styles.voteButtonDownActive]}
+            >
+              <Text style={[styles.voteButtonText, myVote === "downvote" && styles.voteButtonTextDownActive]}>▼</Text>
             </Pressable>
           </View>
-          <Text style={[styles.time, isOwn && styles.timeOwn]}>{time}</Text>
+          {/* Always visible - a reply is a normal, frequent interaction
+              with no real downside to a stray tap, unlike Report (which
+              only lives in the long-press menu below, since it already
+              goes through its own confirm dialog in ConversationScreen and
+              doesn't need to compete for space here). */}
+          <Pressable onPress={onReply} hitSlop={8}>
+            <Text style={[styles.replyLink, isOwn && styles.replyLinkOwn]}>↩ Reply</Text>
+          </Pressable>
         </View>
       </Pressable>
 
@@ -124,7 +129,7 @@ function MessageBubbleImpl({
                 onReport();
               }}
             >
-              <Text style={styles.contextMenuRowTextDanger}>Report</Text>
+              <Text style={styles.contextMenuRowTextDanger}>Report message</Text>
             </Pressable>
           </View>
         </View>
@@ -170,7 +175,8 @@ const styles = StyleSheet.create({
   bubbleOwn: { backgroundColor: "#2C2C2A" },
   reportedText: { fontSize: 13, fontStyle: "italic", color: "#888780" },
   reportedTextOwn: { color: "#B4B2A9" },
-  authorRow: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 2 },
+  authorRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
+  authorRowLeft: { flexDirection: "row", alignItems: "center", gap: 5, flexShrink: 1 },
   username: { fontSize: 11, fontWeight: "500", color: "#5F5E5A" },
   usernameOwn: { color: "#D3D1C7" },
   level: { fontWeight: "400", color: "#888780" },
@@ -186,8 +192,7 @@ const styles = StyleSheet.create({
   replyQuoteTextOwn: { color: "#B4B2A9" },
   body: { fontSize: 14, color: "#2C2C2A" },
   bodyOwn: { color: "white" },
-  metaRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 6 },
-  metaLeftGroup: { flexDirection: "row", alignItems: "center", gap: 10 },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 6 },
   replyLink: { fontSize: 11, color: "#5F5E5A" },
   replyLinkOwn: { color: "#D3D1C7" },
   voteRow: { flexDirection: "row", alignItems: "center", gap: 6 },
@@ -199,7 +204,7 @@ const styles = StyleSheet.create({
   voteButtonTextDownActive: { color: "#A32D2D" },
   voteCount: { fontSize: 13, fontWeight: "500", color: "#5F5E5A", minWidth: 18, textAlign: "center" },
   voteCountOwn: { color: "#D3D1C7" },
-  time: { fontSize: 10, color: "#888780" },
+  time: { fontSize: 10, color: "#888780", marginLeft: 8 },
   timeOwn: { color: "#B4B2A9" },
   contextMenuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
   contextMenuWrap: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" },
