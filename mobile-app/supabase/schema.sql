@@ -659,9 +659,17 @@ as $$
             where m.conversation_id = c.id and m.deleted_at is null
             order by m.created_at desc limit 1),
          exists (
+           -- "Joined" means a participant row still exists (leave_conversation
+           -- deletes it outright) - NOT that state is currently inside/grace.
+           -- Confirmed live: read_only is a normal, expected state for someone
+           -- who's genuinely joined and just isn't physically eligible to post
+           -- right now (grace expired, or - since sweep_stale_participants -
+           -- simply hasn't had the app open in a while); restricting this to
+           -- inside/grace stripped the join checkmark from chats the user was
+           -- still very much a member of.
            select 1 from public.conversation_participants cp
            join public.users u on u.id = cp.user_id
-           where cp.conversation_id = c.id and u.auth_id = auth.uid() and cp.state in ('inside', 'grace')
+           where cp.conversation_id = c.id and u.auth_id = auth.uid()
          )
   from public.conversations c
   where c.status not in ('archived', 'deleted')
@@ -683,9 +691,17 @@ as $$
             where m.conversation_id = c.id and m.deleted_at is null
             order by m.created_at desc limit 1),
          exists (
+           -- "Joined" means a participant row still exists (leave_conversation
+           -- deletes it outright) - NOT that state is currently inside/grace.
+           -- Confirmed live: read_only is a normal, expected state for someone
+           -- who's genuinely joined and just isn't physically eligible to post
+           -- right now (grace expired, or - since sweep_stale_participants -
+           -- simply hasn't had the app open in a while); restricting this to
+           -- inside/grace stripped the join checkmark from chats the user was
+           -- still very much a member of.
            select 1 from public.conversation_participants cp
            join public.users u on u.id = cp.user_id
-           where cp.conversation_id = c.id and u.auth_id = auth.uid() and cp.state in ('inside', 'grace')
+           where cp.conversation_id = c.id and u.auth_id = auth.uid()
          )
   from public.conversations c
   where c.status not in ('archived', 'deleted')
@@ -708,9 +724,17 @@ as $$
             where m.conversation_id = c.id and m.deleted_at is null
             order by m.created_at desc limit 1),
          exists (
+           -- "Joined" means a participant row still exists (leave_conversation
+           -- deletes it outright) - NOT that state is currently inside/grace.
+           -- Confirmed live: read_only is a normal, expected state for someone
+           -- who's genuinely joined and just isn't physically eligible to post
+           -- right now (grace expired, or - since sweep_stale_participants -
+           -- simply hasn't had the app open in a while); restricting this to
+           -- inside/grace stripped the join checkmark from chats the user was
+           -- still very much a member of.
            select 1 from public.conversation_participants cp
            join public.users u on u.id = cp.user_id
-           where cp.conversation_id = c.id and u.auth_id = auth.uid() and cp.state in ('inside', 'grace')
+           where cp.conversation_id = c.id and u.auth_id = auth.uid()
          )
   from public.conversations c
   where c.status not in ('archived', 'deleted')
@@ -736,9 +760,17 @@ as $$
             where m.conversation_id = c.id and m.deleted_at is null
             order by m.created_at desc limit 1),
          exists (
+           -- "Joined" means a participant row still exists (leave_conversation
+           -- deletes it outright) - NOT that state is currently inside/grace.
+           -- Confirmed live: read_only is a normal, expected state for someone
+           -- who's genuinely joined and just isn't physically eligible to post
+           -- right now (grace expired, or - since sweep_stale_participants -
+           -- simply hasn't had the app open in a while); restricting this to
+           -- inside/grace stripped the join checkmark from chats the user was
+           -- still very much a member of.
            select 1 from public.conversation_participants cp
            join public.users u on u.id = cp.user_id
-           where cp.conversation_id = c.id and u.auth_id = auth.uid() and cp.state in ('inside', 'grace')
+           where cp.conversation_id = c.id and u.auth_id = auth.uid()
          )
   from public.conversations c
   where c.id = p_id;
@@ -762,9 +794,17 @@ as $$
             where m.conversation_id = c.id and m.deleted_at is null
             order by m.created_at desc limit 1),
          exists (
+           -- "Joined" means a participant row still exists (leave_conversation
+           -- deletes it outright) - NOT that state is currently inside/grace.
+           -- Confirmed live: read_only is a normal, expected state for someone
+           -- who's genuinely joined and just isn't physically eligible to post
+           -- right now (grace expired, or - since sweep_stale_participants -
+           -- simply hasn't had the app open in a while); restricting this to
+           -- inside/grace stripped the join checkmark from chats the user was
+           -- still very much a member of.
            select 1 from public.conversation_participants cp
            join public.users u on u.id = cp.user_id
-           where cp.conversation_id = c.id and u.auth_id = auth.uid() and cp.state in ('inside', 'grace')
+           where cp.conversation_id = c.id and u.auth_id = auth.uid()
          )
   from public.conversations c
   where c.status not in ('archived', 'deleted')
