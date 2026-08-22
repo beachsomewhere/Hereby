@@ -423,7 +423,25 @@ export function MapScreen({ navigation }: Props) {
             );
           }
           const conversation: ConversationSummary = props.conversation;
-          return <BubbleMarker key={conversation.id} conversation={conversation} onPress={(c) => selectConversation(c)} />;
+          // BubbleMarker's underlying <Marker> sets tracksViewChanges={false}
+          // (a real perf tradeoff - re-rendering every marker's native view
+          // on every 5s poll tick would be expensive at scale) - which means
+          // react-native-maps caches its visual snapshot and never
+          // re-renders it just because a prop changed, only on a genuine
+          // remount. Confirmed live: the join checkmark badge could go
+          // stale (missing, or stuck on) after leaving/rejoining, even
+          // though the underlying isParticipant value - and everything
+          // React-rendered, like the preview sheet's "Open chat"/"Join"
+          // button - was already correct. Keying on isParticipant forces a
+          // remount (and a fresh snapshot) exactly when that specific value
+          // flips, without paying for one on every poll tick.
+          return (
+            <BubbleMarker
+              key={`${conversation.id}-${conversation.isParticipant}`}
+              conversation={conversation}
+              onPress={(c) => selectConversation(c)}
+            />
+          );
         })}
       </MapView>
 
