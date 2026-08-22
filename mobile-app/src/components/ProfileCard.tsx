@@ -1,5 +1,5 @@
-import React from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { User } from "../services/types";
 import { Avatar } from "./Avatar";
 import { AVATAR_ICONS } from "../services/avatarIcons";
@@ -10,7 +10,7 @@ interface Props {
   isSelf?: boolean;
   onClose: () => void;
   onBlock: () => void;
-  onReport: () => void;
+  onReport: (reason: string) => void;
   onSelectIcon?: (icon: string) => void;
   onLogOut?: () => void;
 }
@@ -22,6 +22,22 @@ interface Props {
  * else in the app to see more about a user than this.
  */
 export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport, onSelectIcon, onLogOut }: Props) {
+  // Unlike a message report (the reported message itself is the context a
+  // moderator sees on the dashboard), reporting a user has no inherent
+  // context - without asking why here, every user report would show up
+  // identically as "reported from profile card," telling a moderator
+  // nothing. Reset whenever the card closes: it doesn't unmount between
+  // opens (same instance, `user` just toggles undefined/defined), so stale
+  // state would otherwise carry over to the next profile opened.
+  const [reportMode, setReportMode] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+  useEffect(() => {
+    if (!visible) {
+      setReportMode(false);
+      setReportReason("");
+    }
+  }, [visible]);
+
   if (!user) return null;
   const accountAgeDays = Math.max(0, Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000));
   const ageLabel = accountAgeDays < 1 ? "New today" : accountAgeDays < 30 ? `${accountAgeDays}d on Hereby` : `${Math.floor(accountAgeDays / 30)}mo on Hereby`;
@@ -83,14 +99,40 @@ export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport,
             </View>
           )}
 
-          {!isSelf && (
+          {!isSelf && !reportMode && (
             <View style={styles.actionsRow}>
               <Pressable style={styles.actionButton} onPress={onBlock}>
                 <Text style={styles.actionButtonText}>Block</Text>
               </Pressable>
-              <Pressable style={styles.actionButtonDanger} onPress={onReport}>
+              <Pressable style={styles.actionButtonDanger} onPress={() => setReportMode(true)}>
                 <Text style={styles.actionButtonDangerText}>Report</Text>
               </Pressable>
+            </View>
+          )}
+
+          {!isSelf && reportMode && (
+            <View style={styles.reportSection}>
+              <Text style={styles.reportPrompt}>Why are you reporting this user?</Text>
+              <TextInput
+                style={styles.reportInput}
+                value={reportReason}
+                onChangeText={setReportReason}
+                placeholder="e.g. harassment, spam, impersonation"
+                multiline
+                autoFocus
+              />
+              <View style={styles.actionsRow}>
+                <Pressable style={styles.actionButton} onPress={() => setReportMode(false)}>
+                  <Text style={styles.actionButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.actionButtonDanger, !reportReason.trim() && styles.actionButtonDisabled]}
+                  onPress={() => onReport(reportReason.trim())}
+                  disabled={!reportReason.trim()}
+                >
+                  <Text style={styles.actionButtonDangerText}>Submit report</Text>
+                </Pressable>
+              </View>
             </View>
           )}
 
@@ -144,4 +186,17 @@ const styles = StyleSheet.create({
   actionButtonText: { fontSize: 13, color: "#444441" },
   actionButtonDanger: { borderWidth: 1, borderColor: "#F09595", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16 },
   actionButtonDangerText: { fontSize: 13, color: "#A32D2D" },
+  actionButtonDisabled: { opacity: 0.4 },
+  reportSection: { width: "100%", marginTop: 18 },
+  reportPrompt: { fontSize: 12, color: "#5F5E5A", marginBottom: 8, textAlign: "center" },
+  reportInput: {
+    width: "100%",
+    borderWidth: 1,
+    borderColor: "#D3D1C7",
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 13,
+    minHeight: 60,
+    textAlignVertical: "top",
+  },
 });

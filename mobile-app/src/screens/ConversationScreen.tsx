@@ -307,9 +307,13 @@ export function ConversationScreen({ route, navigation }: Props) {
       {
         text: "Report",
         style: "destructive",
-        onPress: () => {
-          backend.reportTarget(currentUser.id, "message", message.id, "reported from chat");
-          reportMessageInStore(message.id);
+        onPress: async () => {
+          try {
+            await backend.reportTarget(currentUser.id, "message", message.id, "reported from chat");
+            reportMessageInStore(message.id);
+          } catch (err) {
+            Alert.alert("Couldn't report message", err instanceof Error ? err.message : "Something went wrong. Try again.");
+          }
         },
       },
     ]);
@@ -585,9 +589,14 @@ export function ConversationScreen({ route, navigation }: Props) {
           if (profileUser) blockUserInStore(profileUser.id);
           setProfileUser(undefined);
         }}
-        onReport={() => {
-          if (currentUser && profileUser) backend.reportTarget(currentUser.id, "user", profileUser.id, "reported from profile card");
-          setProfileUser(undefined);
+        onReport={async (reason) => {
+          if (!currentUser || !profileUser) return;
+          try {
+            await backend.reportTarget(currentUser.id, "user", profileUser.id, reason);
+            setProfileUser(undefined);
+          } catch (err) {
+            Alert.alert("Couldn't report user", err instanceof Error ? err.message : "Something went wrong. Try again.");
+          }
         }}
         onSelectIcon={handleSelectIcon}
         onLogOut={handleLogOut}

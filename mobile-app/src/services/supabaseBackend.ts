@@ -452,22 +452,18 @@ export async function reportTarget(
   targetType: ReportTargetType,
   targetId: string,
   reason: string
-): Promise<Report> {
-  const { data, error } = await supabase
+): Promise<void> {
+  // No .select() here deliberately - reports has no SELECT policy for
+  // authenticated (moderator-only, read only via the admin dashboard's
+  // is_moderator()-gated RPCs). Postgres RLS applies SELECT policies to an
+  // INSERT ... RETURNING clause too, so chaining .select().single() after
+  // this insert throws even though the insert itself succeeds - confirmed
+  // live as the reason a filed report never seemed to reach the dashboard
+  // (neither call site awaited/caught this, so the error was silent).
+  const { error } = await supabase
     .from("reports")
-    .insert({ reporter_id: reporterId, target_type: targetType, target_id: targetId, reason })
-    .select()
-    .single();
+    .insert({ reporter_id: reporterId, target_type: targetType, target_id: targetId, reason });
   if (error) raise(error);
-  return {
-    id: data.id,
-    reporterId: data.reporter_id,
-    targetType: data.target_type,
-    targetId: data.target_id,
-    reason: data.reason,
-    createdAt: data.created_at,
-    status: data.status,
-  };
 }
 
 // ---------------------------------------------------------------------------
