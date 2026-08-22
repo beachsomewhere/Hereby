@@ -25,6 +25,7 @@ import { ConfirmationType, ConversationSummary, Message, ParticipantState, Threa
 import { MessageBubble } from "../components/MessageBubble";
 import { ProfileCard } from "../components/ProfileCard";
 import { CreateThreadSheet } from "../components/CreateThreadSheet";
+import { ReportMessageSheet } from "../components/ReportMessageSheet";
 import { maskProfanity } from "../services/profanityFilter";
 import { setActiveThreadId as setActivePushThreadId } from "../services/pushNotifications";
 
@@ -61,6 +62,8 @@ export function ConversationScreen({ route, navigation }: Props) {
   const [draft, setDraft] = useState("");
   const [replyTo, setReplyTo] = useState<Message>();
   const [profileUser, setProfileUser] = useState<User>();
+  const [profileSourceMessageId, setProfileSourceMessageId] = useState<string>();
+  const [reportingMessage, setReportingMessage] = useState<Message>();
   const [voteState, setVoteState] = useState<Record<string, { upvotes: number; downvotes: number; myVote?: ConfirmationType }>>({});
   const [createThreadVisible, setCreateThreadVisible] = useState(false);
   const [threadListVisible, setThreadListVisible] = useState(false);
@@ -302,21 +305,17 @@ export function ConversationScreen({ route, navigation }: Props) {
 
   function handleReport(message: Message) {
     if (!currentUser) return;
-    Alert.alert("Report message", "Report this message to moderators?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Report",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await backend.reportTarget(currentUser.id, "message", message.id, "reported from chat");
-            reportMessageInStore(message.id);
-          } catch (err) {
-            Alert.alert("Couldn't report message", err instanceof Error ? err.message : "Something went wrong. Try again.");
-          }
-        },
-      },
-    ]);
+    setReportingMessage(message);
+  }
+
+  async function handleSubmitMessageReport(reason: string) {
+    if (!currentUser || !reportingMessage) return;
+    try {
+      await backend.reportTarget(currentUser.id, "message", reportingMessage.id, reason);
+      reportMessageInStore(reportingMessage.id);
+    } catch (err) {
+      Alert.alert("Couldn't report message", err instanceof Error ? err.message : "Something went wrong. Try again.");
+    }
   }
 
   async function handleToggleMute() {
@@ -351,13 +350,18 @@ export function ConversationScreen({ route, navigation }: Props) {
     ]);
   }
 
-  async function openProfile(userId: string, username: string) {
+  async function openProfile(userId: string, username: string, sourceMessageId: string) {
     try {
       const user = await backend.getUser(userId);
       // A genuinely-missing user falls back to a placeholder (0 points,
       // level 1) - that's a real "this account doesn't exist" case, not the
       // same as a failed fetch, which throws instead of reaching here.
       setProfileUser(user ?? { id: userId, username, avatarSeed: userId, level: 1, helpfulPoints: 0, createdAt: new Date().toISOString(), badgeIds: [] });
+      // The profile card is only ever opened by tapping a specific
+      // message's author row, so that message is the evidence a "report
+      // this user" filed from here should carry - see reportTarget's
+      // contextMessageId param.
+      setProfileSourceMessageId(sourceMessageId);
     } catch (err) {
       Alert.alert("Couldn't load profile", err instanceof Error ? err.message : "Something went wrong. Try again.");
     }
@@ -542,7 +546,7 @@ export function ConversationScreen({ route, navigation }: Props) {
             onVote={(type) => handleVote(item, type)}
             onReport={() => handleReport(item)}
             onReply={() => setReplyTo(item)}
-            onOpenProfile={() => openProfile(item.userId, item.username)}
+            onOpenProfile={() => openProfile(item.userId, item.username, item.id)}
           />
         )}
         contentContainerStyle={styles.list}
@@ -584,22 +588,33 @@ export function ConversationScreen({ route, navigation }: Props) {
         user={profileUser}
         visible={!!profileUser}
         isSelf={!!profileUser && profileUser.id === currentUser?.id}
-        onClose={() => setProfileUser(undefined)}
+        onClose={() => {
+          setProfileUser(undefined);
+          setProfileSourceMessageId(undefined);
+        }}
         onBlock={() => {
           if (profileUser) blockUserInStore(profileUser.id);
           setProfileUser(undefined);
+          setProfileSourceMessageId(undefined);
         }}
         onReport={async (reason) => {
           if (!currentUser || !profileUser) return;
           try {
-            await backend.reportTarget(currentUser.id, "user", profileUser.id, reason);
+            await backend.reportTarget(currentUser.id, "user", profileUser.id, reason, profileSourceMessageId);
             setProfileUser(undefined);
+            setProfileSourceMessageId(undefined);
           } catch (err) {
             Alert.alert("Couldn't report user", err instanceof Error ? err.message : "Something went wrong. Try again.");
           }
         }}
         onSelectIcon={handleSelectIcon}
         onLogOut={handleLogOut}
+      />
+
+      <ReportMessageSheet
+        visible={!!reportingMessage}
+        onClose={() => setReportingMessage(undefined)}
+        onSubmit={handleSubmitMessageReport}
       />
 
       <CreateThreadSheet

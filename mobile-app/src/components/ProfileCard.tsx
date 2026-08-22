@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { User } from "../services/types";
 import { Avatar } from "./Avatar";
 import { AVATAR_ICONS } from "../services/avatarIcons";
+import { ReportReasonPicker, resolveReportReason } from "./ReportReasonPicker";
 
 interface Props {
   user?: User;
@@ -30,11 +31,14 @@ export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport,
   // opens (same instance, `user` just toggles undefined/defined), so stale
   // state would otherwise carry over to the next profile opened.
   const [reportMode, setReportMode] = useState(false);
-  const [reportReason, setReportReason] = useState("");
+  const [reportSelected, setReportSelected] = useState<string>();
+  const [reportCustomText, setReportCustomText] = useState("");
+  const reportReason = resolveReportReason(reportSelected, reportCustomText);
   useEffect(() => {
     if (!visible) {
       setReportMode(false);
-      setReportReason("");
+      setReportSelected(undefined);
+      setReportCustomText("");
     }
   }, [visible]);
 
@@ -113,22 +117,20 @@ export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport,
           {!isSelf && reportMode && (
             <View style={styles.reportSection}>
               <Text style={styles.reportPrompt}>Why are you reporting this user?</Text>
-              <TextInput
-                style={styles.reportInput}
-                value={reportReason}
-                onChangeText={setReportReason}
-                placeholder="e.g. harassment, spam, impersonation"
-                multiline
-                autoFocus
+              <ReportReasonPicker
+                selected={reportSelected}
+                onSelect={setReportSelected}
+                customText={reportCustomText}
+                onCustomTextChange={setReportCustomText}
               />
               <View style={styles.actionsRow}>
                 <Pressable style={styles.actionButton} onPress={() => setReportMode(false)}>
                   <Text style={styles.actionButtonText}>Cancel</Text>
                 </Pressable>
                 <Pressable
-                  style={[styles.actionButtonDanger, !reportReason.trim() && styles.actionButtonDisabled]}
-                  onPress={() => onReport(reportReason.trim())}
-                  disabled={!reportReason.trim()}
+                  style={[styles.actionButtonDanger, !reportReason && styles.actionButtonDisabled]}
+                  onPress={() => reportReason && onReport(reportReason)}
+                  disabled={!reportReason}
                 >
                   <Text style={styles.actionButtonDangerText}>Submit report</Text>
                 </Pressable>
@@ -189,14 +191,4 @@ const styles = StyleSheet.create({
   actionButtonDisabled: { opacity: 0.4 },
   reportSection: { width: "100%", marginTop: 18 },
   reportPrompt: { fontSize: 12, color: "#5F5E5A", marginBottom: 8, textAlign: "center" },
-  reportInput: {
-    width: "100%",
-    borderWidth: 1,
-    borderColor: "#D3D1C7",
-    borderRadius: 8,
-    padding: 10,
-    fontSize: 13,
-    minHeight: 60,
-    textAlignVertical: "top",
-  },
 });

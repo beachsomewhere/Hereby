@@ -9,6 +9,7 @@ interface ReportRow {
   reason: string;
   created_at: string;
   status: "open" | "upheld" | "dismissed";
+  context_message_id: string | null;
 }
 
 async function loadContext(
@@ -25,7 +26,19 @@ async function loadContext(
   }
   if (report.target_type === "user") {
     const { data } = await supabase.from("users").select("username").eq("id", report.target_id).maybeSingle();
-    return data ? `User: ${data.username}` : "User not found.";
+    const label = data ? `User: ${data.username}` : "User not found.";
+    // The profile card is only ever opened by tapping a specific message's
+    // author row (see mobile-app's ConversationScreen.tsx#openProfile), so
+    // this is the message that prompted the report, when one was captured -
+    // without it a user report had no evidence at all to judge, just a
+    // username and a reason string.
+    if (!report.context_message_id) return label;
+    const { data: msg } = await supabase
+      .from("messages")
+      .select("body")
+      .eq("id", report.context_message_id)
+      .maybeSingle();
+    return msg ? `${label} — reported while viewing: "${msg.body}"` : label;
   }
   const { data } = await supabase.from("conversations").select("title").eq("id", report.target_id).maybeSingle();
   return data ? `Conversation: ${data.title}` : "Conversation not found.";

@@ -451,7 +451,8 @@ export async function reportTarget(
   reporterId: string,
   targetType: ReportTargetType,
   targetId: string,
-  reason: string
+  reason: string,
+  contextMessageId?: string
 ): Promise<void> {
   // No .select() here deliberately - reports has no SELECT policy for
   // authenticated (moderator-only, read only via the admin dashboard's
@@ -460,9 +461,21 @@ export async function reportTarget(
   // this insert throws even though the insert itself succeeds - confirmed
   // live as the reason a filed report never seemed to reach the dashboard
   // (neither call site awaited/caught this, so the error was silent).
+  //
+  // contextMessageId: only meaningful for a "user" report - the profile
+  // card is only ever opened by tapping a specific message's author row
+  // (ConversationScreen.tsx#openProfile), so the message that prompted the
+  // report is already known at the moment of reporting. Gives the
+  // dashboard something to show besides just a username.
   const { error } = await supabase
     .from("reports")
-    .insert({ reporter_id: reporterId, target_type: targetType, target_id: targetId, reason });
+    .insert({
+      reporter_id: reporterId,
+      target_type: targetType,
+      target_id: targetId,
+      reason,
+      context_message_id: contextMessageId ?? null,
+    });
   if (error) raise(error);
 }
 

@@ -1166,3 +1166,17 @@ begin
     (select count(*) from public.users where created_at > now() - interval '7 days' and not is_deleted);
 end;
 $$;
+
+-- A user report (filed from the profile card) previously carried no
+-- message content at all, unlike a message report - the dashboard could
+-- only show a username and a freeform reason string, no actual evidence.
+-- The profile card is only ever opened by tapping a specific message's
+-- author row though (see MessageBubble.tsx#onOpenProfile), so the message
+-- that prompted the report is always known client-side at the moment of
+-- reporting - this just gives it somewhere to go. Nullable: not every
+-- future report-a-user path is guaranteed to originate from a message.
+-- `on delete set null` rather than cascade/restrict - conversations (and
+-- their messages) get hard-deleted on the retention sweep a few days after
+-- going quiet, and a report's own audit trail should survive that even if
+-- the message it referenced doesn't.
+alter table public.reports add column if not exists context_message_id uuid references public.messages(id) on delete set null;
