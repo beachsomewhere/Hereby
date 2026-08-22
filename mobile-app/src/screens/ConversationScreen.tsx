@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useHeaderHeight } from "@react-navigation/elements";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAppStore, effectiveLocation } from "../state/useAppStore";
 import * as backend from "../services/supabaseBackend";
@@ -46,6 +47,7 @@ const STATE_BANNER: Record<ParticipantState, string | undefined> = {
 export function ConversationScreen({ route, navigation }: Props) {
   const { conversationId, threadId: routeThreadId } = route.params;
   const headerHeight = useHeaderHeight();
+  const insets = useSafeAreaInsets();
   const currentUser = useAppStore((s) => s.currentUser);
   const setCurrentUser = useAppStore((s) => s.setCurrentUser);
   const logOutInStore = useAppStore((s) => s.logOut);
@@ -616,7 +618,11 @@ export function ConversationScreen({ route, navigation }: Props) {
         </View>
       )}
 
-      <View style={styles.inputRow}>
+      {/* Confirmed live: without the safe-area bottom inset added on top of
+          the row's own 12pt padding, the input and Send button sat right at
+          the edge of the screen, clipped by the home-indicator bezel on
+          notch-bottom devices. */}
+      <View style={[styles.inputRow, { paddingBottom: 12 + insets.bottom }]}>
         <TextInput
           style={styles.input}
           value={draft}
