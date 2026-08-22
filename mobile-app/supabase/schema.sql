@@ -1180,3 +1180,372 @@ $$;
 -- going quiet, and a report's own audit trail should survive that even if
 -- the message it referenced doesn't.
 alter table public.reports add column if not exists context_message_id uuid references public.messages(id) on delete set null;
+
+-- ---------------------------------------------------------------------------
+-- Autonomous AI report triage. Reports still get saved immediately and never
+-- block the reporter's UI - a trigger below dispatches an async analysis job
+-- the same way notify_new_message already dispatches pushes, and every
+-- write happens on a moderation_cases row so a burst of reports against one
+-- target (the "37 stadium reports on one message" case) reuses a single
+-- analysis instead of running one per report.
+-- ---------------------------------------------------------------------------
+
+do $$ begin
+  create type moderation_priority as enum ('P0', 'P1', 'P2', 'P3');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  -- Declaration order is Postgres's default sort order for an enum column -
+  -- 'critical' first so `order by severity` alone puts the worst cases on
+  -- top without a CASE expression anywhere.
+  create type moderation_severity as enum ('critical', 'high', 'medium', 'low');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type ai_processing_status as enum (
+    'pending', 'moderation_check_complete', 'context_analysis_pending',
+    'analysis_complete', 'analysis_failed', 'deferred_budget_limit'
+  );
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type ai_call_type as enum ('moderation_check', 'contextual_analysis');
+exception when duplicate_object then null;
+end $$;
+
+-- Single source of truth for the two cost limits - both analyzeReport (a
+-- direct service-role read) and the web dashboard's budget banner
+-- (admin_moderation_config() below) read from here, rather than each
+-- keeping its own copy that could silently drift out of sync with the
+-- other (the dashboard would then show a different "% of budget used" than
+-- what analyzeReport is actually enforcing).
+create table if not exists public.moderation_config (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+insert into public.moderation_config (key, value) values
+  ('AI_DAILY_COST_LIMIT_USD', '2.00'),
+  ('AI_MONTHLY_COST_LIMIT_USD', '20.00')
+on conflict (key) do nothing; -- seed only if unset - re-running this file must never reset a value someone deliberately changed
+alter table public.moderation_config enable row level security; -- zero client policies, service-role/RPC only
+
+-- The primary object for triage/resolution - individual `reports` rows link
+-- to one of these via moderation_case_id below, and everything (AI
+-- analysis, the admin queue, Uphold/Dismiss) operates on the case, not the
+-- individual report.
+create table if not exists public.moderation_cases (
+  id uuid primary key default gen_random_uuid(),
+  target_type report_target_type not null,
+  target_id uuid not null,
+  -- Resolved once at case creation: target_id itself for a user report,
+  -- messages.user_id for a message report, conversations.created_by for a
+  -- conversation report.
+  reported_user_id uuid references public.users(id),
+  -- Captured at creation time, not read lazily - conversations/messages get
+  -- hard-deleted by the retention sweep a few days after going quiet, and a
+  -- case can easily still be open for human review well past that. Without
+  -- this a moderator reviewing an older case would have nothing to look at.
+  reported_content_snapshot text,
+  report_count integer not null default 1,
+  first_reported_at timestamptz not null default now(),
+  last_reported_at timestamptz not null default now(),
+  status report_status not null default 'open', -- reuses reports' own open/upheld/dismissed enum rather than inventing a parallel one
+  priority moderation_priority not null default 'P2',
+  severity moderation_severity,
+  confidence numeric(5,4),
+  -- Plain text, deliberately not enums - an enum would need `alter type ...
+  -- add value` (can't run inside the same transaction as other DDL) every
+  -- time OpenAI's own moderation taxonomy or this app's action vocabulary
+  -- grows, which breaks the idempotent-full-re-run model this file depends
+  -- on. Validated in the Edge Function, not the database.
+  violation_category text,
+  recommended_action text,
+  requires_human_review boolean not null default true, -- true until AI says otherwise, so a case is never silently invisible before/if analysis ever completes
+  ai_recommended_dismissal boolean not null default false,
+  ai_status ai_processing_status not null default 'pending',
+  ai_model_moderation text,
+  ai_model_contextual text,
+  ai_raw_response jsonb, -- full contextual-pass response, kept for audit
+  ai_analyzed_at timestamptz,
+  resolved_by uuid references public.users(id),
+  resolved_at timestamptz,
+  resolution_notes text,
+  created_at timestamptz not null default now()
+);
+-- At most one OPEN case per target - what makes dedup atomic (see the
+-- trigger below). A later new report against a target whose prior case
+-- already resolved starts a fresh case rather than reopening a closed one.
+create unique index if not exists moderation_cases_open_target_unique_idx
+  on public.moderation_cases(target_type, target_id) where status = 'open';
+create index if not exists moderation_cases_status_priority_idx
+  on public.moderation_cases(status, priority, severity, report_count desc, confidence desc, first_reported_at);
+create index if not exists moderation_cases_reported_user_idx
+  on public.moderation_cases(reported_user_id) where reported_user_id is not null;
+alter table public.moderation_cases enable row level security; -- zero client policies, same "service-role/RPC only" treatment as moderation_actions
+
+alter table public.reports add column if not exists moderation_case_id uuid references public.moderation_cases(id) on delete set null;
+create index if not exists reports_moderation_case_id_idx on public.reports(moderation_case_id);
+
+-- Per-call cost/token log, one row per OpenAI request (including the free
+-- moderation-endpoint pass, logged at $0 for a complete usage trail). What
+-- the circuit breaker in analyzeReport sums against moderation_config's
+-- limits, and what the dashboard's cost-summary section reads.
+create table if not exists public.ai_moderation_usage_log (
+  id uuid primary key default gen_random_uuid(),
+  case_id uuid references public.moderation_cases(id) on delete set null,
+  call_type ai_call_type not null,
+  model text not null,
+  prompt_tokens integer not null default 0,
+  completion_tokens integer not null default 0,
+  estimated_cost_usd numeric(10,6) not null default 0,
+  success boolean not null,
+  error_message text,
+  created_at timestamptz not null default now()
+);
+create index if not exists ai_usage_log_created_at_idx on public.ai_moderation_usage_log(created_at);
+alter table public.ai_moderation_usage_log enable row level security; -- zero client policies, service-role/RPC only
+
+-- Dedup + dispatch. AFTER INSERT (not BEFORE, unlike the rate limit trigger
+-- below) since it needs the fully-resolved new.id to link back to; entire
+-- body exception-wrapped exactly like notify_new_message - a failure
+-- anywhere in here must never roll back or block the report insert itself.
+create or replace function public.link_report_to_moderation_case() returns trigger
+language plpgsql
+security definer
+as $$
+declare
+  v_case_id uuid;
+  v_is_new boolean := false;
+  v_reported_user_id uuid;
+  v_snapshot text;
+  v_service_key text;
+begin
+  begin
+    -- Standard find-or-create-under-a-unique-index retry loop - guards a
+    -- real (if rare at this app's scale) race: two reports against a
+    -- brand-new target landing in the same instant could both see "no open
+    -- case yet" and both try to INSERT, tripping the partial unique index
+    -- above on whichever commits second. Loop back and UPDATE instead of
+    -- surfacing the error.
+    loop
+      update public.moderation_cases set
+        report_count = report_count + 1,
+        last_reported_at = now(),
+        priority = case
+          when priority = 'P3' and report_count + 1 >= 5 then 'P2'
+          when priority in ('P2', 'P3') and report_count + 1 >= 15 then 'P1'
+          else priority
+        end
+      where target_type = new.target_type and target_id = new.target_id and status = 'open'
+      returning id into v_case_id;
+      exit when found;
+
+      if new.target_type = 'message' then
+        select m.user_id, (m.username || ': "' || m.body || '"')
+          into v_reported_user_id, v_snapshot
+          from public.messages m where m.id = new.target_id;
+      elsif new.target_type = 'user' then
+        v_reported_user_id := new.target_id;
+        select 'User: ' || u.username into v_snapshot from public.users u where u.id = new.target_id;
+      else
+        select c.created_by, 'Conversation: ' || c.title into v_reported_user_id, v_snapshot
+          from public.conversations c where c.id = new.target_id;
+      end if;
+
+      begin
+        insert into public.moderation_cases
+          (target_type, target_id, reported_user_id, reported_content_snapshot, report_count)
+        values (new.target_type, new.target_id, v_reported_user_id, v_snapshot, 1)
+        returning id into v_case_id;
+        v_is_new := true;
+        exit;
+      exception when unique_violation then
+        -- Lost the race - loop back and UPDATE the row the other
+        -- transaction just committed.
+      end;
+    end loop;
+
+    update public.reports set moderation_case_id = v_case_id where id = new.id;
+
+    if v_is_new then
+      -- Same Vault secret notify_new_message already uses - one service-
+      -- role key for every trigger-dispatched async call in this file.
+      select decrypted_secret into v_service_key
+      from vault.decrypted_secrets where name = 'notify_new_message_service_key';
+
+      perform net.http_post(
+        url := 'https://fuhdxvyqahwmikpgiikk.functions.supabase.co/analyzeReport',
+        headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_service_key),
+        body := jsonb_build_object('caseId', v_case_id)
+      );
+    end if;
+  exception when others then
+    raise warning 'link_report_to_moderation_case failed: %', sqlerrm;
+  end;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_link_report_to_moderation_case on public.reports;
+create trigger trg_link_report_to_moderation_case
+  after insert on public.reports
+  for each row execute function public.link_report_to_moderation_case();
+
+-- Reports can be abused same as messages can - mirrors
+-- enforce_message_rate_limit's exact shape. Named to sort ("enforce_" <
+-- "link_") before the case-linking trigger above, so a rate-limited report
+-- never reaches it.
+create or replace function public.enforce_report_rate_limit() returns trigger
+language plpgsql as $$
+declare
+  v_recent_count integer;
+  v_oldest_in_window timestamptz;
+  v_wait_seconds integer;
+begin
+  select count(*) into v_recent_count
+  from public.reports
+  where reporter_id = new.reporter_id and created_at > now() - interval '10 minutes';
+
+  if v_recent_count >= 10 then
+    select created_at into v_oldest_in_window
+    from public.reports
+    where reporter_id = new.reporter_id and created_at > now() - interval '10 minutes'
+    order by created_at asc
+    limit 1;
+    v_wait_seconds := greatest(1, ceil(extract(epoch from (v_oldest_in_window + interval '10 minutes' - now())))::integer);
+    raise exception 'You are filing reports too quickly. Try again in % seconds.', v_wait_seconds;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_enforce_report_rate_limit on public.reports;
+create trigger trg_enforce_report_rate_limit
+  before insert on public.reports
+  for each row execute function public.enforce_report_rate_limit();
+
+create or replace function public.admin_list_moderation_cases(p_status report_status default 'open')
+returns setof public.moderation_cases
+language plpgsql
+security definer
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'not authorized';
+  end if;
+  return query
+    select * from public.moderation_cases
+    where status = p_status
+    order by priority asc, severity asc nulls last, report_count desc, confidence desc nulls last, first_reported_at asc;
+end;
+$$;
+
+create or replace function public.admin_moderation_cost_summary()
+returns table (
+  reports_today bigint,
+  moderation_checks_today bigint,
+  contextual_analyses_today bigint,
+  cost_today_usd numeric,
+  reports_month bigint,
+  cost_month_usd numeric
+)
+language plpgsql
+security definer
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'not authorized';
+  end if;
+  return query select
+    (select count(*) from public.reports where created_at >= current_date),
+    (select count(*) from public.ai_moderation_usage_log where call_type = 'moderation_check' and created_at >= current_date),
+    (select count(*) from public.ai_moderation_usage_log where call_type = 'contextual_analysis' and created_at >= current_date),
+    (select coalesce(sum(estimated_cost_usd), 0) from public.ai_moderation_usage_log where created_at >= current_date),
+    (select count(*) from public.reports where created_at >= date_trunc('month', now())),
+    (select coalesce(sum(estimated_cost_usd), 0) from public.ai_moderation_usage_log where created_at >= date_trunc('month', now()));
+end;
+$$;
+
+create or replace function public.admin_moderation_config()
+returns table (daily_limit_usd numeric, monthly_limit_usd numeric)
+language plpgsql
+security definer
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'not authorized';
+  end if;
+  return query select
+    (select value::numeric from public.moderation_config where key = 'AI_DAILY_COST_LIMIT_USD'),
+    (select value::numeric from public.moderation_config where key = 'AI_MONTHLY_COST_LIMIT_USD');
+end;
+$$;
+
+-- Deferred-budget replay. Without this, a case that lands in
+-- deferred_budget_limit during a cost crunch sits there forever unless a
+-- moderator manually clicks "Re-run AI Analysis" - conflicts with "the
+-- moderation system must never silently stop functioning." Same
+-- commented-out-until-configured convention as the recompute-activity job
+-- below - fill in the real project ref/service-role key and enable via the
+-- SQL editor when ready. Calls analyzeReport in sweep mode ({sweep: true}
+-- instead of a caseId), which reprocesses every deferred_budget_limit case
+-- through the normal pipeline - harmless to re-check ones still over
+-- budget, they just stay deferred.
+-- select cron.schedule('replay-deferred-moderation-cases', '0 * * * *', $$
+--   select net.http_post(
+--     url := 'https://<project-ref>.functions.supabase.co/analyzeReport',
+--     headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer <service-role-key>'),
+--     body := jsonb_build_object('sweep', true)
+--   );
+-- $$);
+
+-- Auto-delete, separate from auto-dismiss above (still gated off by its
+-- own flag): removes likely-violating message content immediately once
+-- confidence clears a tiered bar (lower for high-risk categories like
+-- harassment/threats, higher for lower-stakes ones like spam - see
+-- AI_AUTO_DELETE_HIGH_RISK_CONFIDENCE_THRESHOLD/_LOW_RISK_ in
+-- analyzeReport), but - unlike auto-dismiss - never auto-closes the case
+-- above the lowest severity tier. Content comes down fast; a human still
+-- makes the account-level call (suspend/ban/report to authorities).
+alter table public.moderation_cases add column if not exists content_auto_removed boolean not null default false;
+
+-- AI-driven actions have no human moderator behind them - relaxed from not
+-- null so analyzeReport can log an auto-action into the same audit trail
+-- moderationAction already writes every human one into, rather than
+-- needing a second, parallel log just for AI actions.
+alter table public.moderation_actions alter column moderator_id drop not null;
+alter table public.moderation_actions add column if not exists is_ai_action boolean not null default false;
+
+-- Confirmed live: a benign reported message ("I love strawberries!") got
+-- assessed as a critical threat and auto-deleted because a genuine death
+-- threat turned up in the SAME user's other, unrelated messages (fed in as
+-- background context for pattern-awareness) - the model correctly saw the
+-- reported content itself was harmless, but nothing stopped that
+-- discovery from driving this case's own severity, and auto-delete then
+-- acted on target_id (the reported message), deleting the wrong thing
+-- entirely while the real threat stayed live. severity_based_on is the
+-- model's own explicit signal for this ("context_only" means the elevated
+-- severity came from something other than what was actually reported);
+-- analyzeReport's auto-delete gate now also requires it to be
+-- "reported_content" before ever acting, on top of a second, independent
+-- check (the free moderation-endpoint pass run on the reported content
+-- alone must also have flagged something) - defense in depth, since the
+-- second check doesn't depend on the model following the prompt correctly
+-- at all.
+do $$ begin
+  create type severity_basis as enum ('reported_content', 'context_only');
+exception when duplicate_object then null;
+end $$;
+alter table public.moderation_cases add column if not exists severity_based_on severity_basis;
+
+-- The model's own plain-English justification for its assessment, shown
+-- directly on the admin dashboard - previously only reachable by digging
+-- into ai_raw_response via SQL, which is exactly what made this bug take
+-- an extra round trip to diagnose instead of being obvious from the
+-- dashboard card itself.
+alter table public.moderation_cases add column if not exists reasoning text;

@@ -18,7 +18,7 @@ interface RequestBody {
   targetType: "message" | "user" | "conversation";
   targetId: string;
   reason: string;
-  reportId?: string;
+  caseId?: string;
 }
 
 // Every other Edge Function in this project has only ever been called from
@@ -77,7 +77,7 @@ serve(async (req) => {
     .single();
   if (!moderator || moderator.role !== "moderator") return new Response("Forbidden", { status: 403, headers: corsHeaders });
 
-  const { action, targetType, targetId, reason, reportId } = (await req.json()) as RequestBody;
+  const { action, targetType, targetId, reason, caseId } = (await req.json()) as RequestBody;
 
   switch (action) {
     case "lock_conversation":
@@ -91,7 +91,7 @@ serve(async (req) => {
       await supabaseAdmin.from("users").update({ is_deleted: action === "ban_user" }).eq("id", targetId);
       break;
     case "uphold_report":
-    case "dismiss_report":
+    case "dismiss_report": {
       // Upholding a message report removes it for everyone (soft delete) -
       // distinct from the reporter's own immediate, client-side-only hide
       // (see useAppStore.ts#reportedMessageIds), which never touches the
@@ -103,17 +103,33 @@ serve(async (req) => {
       if (action === "uphold_report" && targetType === "message") {
         await supabaseAdmin.from("messages").update({ deleted_at: new Date().toISOString() }).eq("id", targetId);
       }
-      if (reportId) {
+      // Resolution operates on the moderation_case, not a single report -
+      // a burst of reports against one target (see
+      // link_report_to_moderation_case in schema.sql) all link to the same
+      // case, so one moderator decision here resolves every one of them
+      // atomically instead of requiring a separate click per report.
+      if (caseId) {
+        const resolvedStatus = action === "uphold_report" ? "upheld" : "dismissed";
+        await supabaseAdmin
+          .from("moderation_cases")
+          .update({
+            status: resolvedStatus,
+            resolved_by: moderator.id,
+            resolved_at: new Date().toISOString(),
+            resolution_notes: reason,
+          })
+          .eq("id", caseId);
         await supabaseAdmin
           .from("reports")
           .update({
-            status: action === "uphold_report" ? "upheld" : "dismissed",
+            status: resolvedStatus,
             resolved_by: moderator.id,
             resolution_notes: reason,
           })
-          .eq("id", reportId);
+          .eq("moderation_case_id", caseId);
       }
       break;
+    }
   }
 
   await supabaseAdmin.from("moderation_actions").insert({
