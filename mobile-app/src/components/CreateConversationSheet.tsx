@@ -205,7 +205,7 @@ export function CreateConversationSheet({
             {suggestions.map((s) => (
               <Pressable key={s.id} style={styles.suggestionRow} onPress={() => onJoinExisting(s)}>
                 <Text style={styles.suggestionTitle}>{s.title}</Text>
-                <Text style={styles.suggestionMeta}>{s.participantCount} participants - tap to join</Text>
+                <Text style={styles.suggestionMeta}>{s.participantCount} active - tap to join</Text>
               </Pressable>
             ))}
             <Pressable onPress={() => handleCreate(true)}>
@@ -223,7 +223,7 @@ export function CreateConversationSheet({
             {supersedeWarning.map((s) => (
               <Pressable key={s.id} style={styles.suggestionRow} onPress={() => onJoinExisting(s)}>
                 <Text style={styles.suggestionTitle}>{s.title}</Text>
-                <Text style={styles.suggestionMeta}>{s.participantCount} participants - tap to join instead</Text>
+                <Text style={styles.suggestionMeta}>{s.participantCount} active - tap to join instead</Text>
               </Pressable>
             ))}
             <Pressable onPress={() => handleCreate(true)}>

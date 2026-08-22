@@ -35,7 +35,7 @@ export function ConversationPreviewSheet({ conversation, hiddenNearby = [], onCl
 
         <View style={styles.statsRow}>
           <View style={styles.stat}>
-            <Text style={styles.statLabel}>Participants</Text>
+            <Text style={styles.statLabel}>Active</Text>
             <Text style={styles.statValue}>{conversation.participantCount}</Text>
           </View>
           <View style={styles.stat}>
@@ -68,7 +68,7 @@ export function ConversationPreviewSheet({ conversation, hiddenNearby = [], onCl
                   {c.title}
                 </Text>
                 <Text style={styles.nearbyRowMeta}>
-                  {c.participantCount} participants · {c.isParticipant ? "tap to open" : "tap to join"}
+                  {c.participantCount} active · {c.isParticipant ? "tap to open" : "tap to join"}
                 </Text>
               </Pressable>
             ))}

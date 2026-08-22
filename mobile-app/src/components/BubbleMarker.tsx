@@ -50,7 +50,12 @@ export function BubbleMarker({ conversation, onPress }: Props) {
           {conversation.title}
         </Text>
         <Text style={[styles.meta, { color: colors.text }]} numberOfLines={1}>
-          {conversation.participantCount} {conversation.participantCount === 1 ? "person" : "people"} · {heatLabel}
+          {/* "active" (not "people"/"participants") - deliberately: this
+              counts who's currently inside/grace right now, not everyone
+              who's ever joined, so a joined-but-read_only member seeing
+              their own conversation show 0 here read as a contradiction
+              next to their own join checkmark. */}
+          {conversation.participantCount} active · {heatLabel}
         </Text>
       </View>
     </Marker>
