@@ -1549,3 +1549,87 @@ alter table public.moderation_cases add column if not exists severity_based_on s
 -- an extra round trip to diagnose instead of being obvious from the
 -- dashboard card itself.
 alter table public.moderation_cases add column if not exists reasoning text;
+
+-- ---------------------------------------------------------------------------
+-- Adoption metrics. admin_stats() only ever gave point-in-time snapshot
+-- counts - no trend, no history. avg_participants_per_conversation below is
+-- a second point-in-time metric (like active_conversations), computed from
+-- conversations.participant_count. Trends (signups/conversations/messages/
+-- DAU per day) are handled separately by admin_adoption_trends() further
+-- down, since those need a day-by-day breakdown rather than a single row.
+-- ---------------------------------------------------------------------------
+
+-- Adding a column to the return type isn't a CREATE OR REPLACE-compatible
+-- change (Postgres rejects it as "cannot change return type of existing
+-- function") - drop first since this is re-run idempotently like the rest
+-- of this file.
+drop function if exists public.admin_stats();
+
+create or replace function public.admin_stats()
+returns table (
+  total_users bigint,
+  total_conversations bigint,
+  active_conversations bigint,
+  total_messages bigint,
+  messages_last_24h bigint,
+  new_users_last_7d bigint,
+  avg_participants_per_conversation numeric
+)
+language plpgsql
+security definer
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'not authorized';
+  end if;
+  return query select
+    (select count(*) from public.users where not is_deleted),
+    (select count(*) from public.conversations where status <> 'deleted'),
+    (select count(*) from public.conversations where status = 'active'),
+    (select count(*) from public.messages where deleted_at is null),
+    (select count(*) from public.messages where created_at > now() - interval '24 hours' and deleted_at is null),
+    (select count(*) from public.users where created_at > now() - interval '7 days' and not is_deleted),
+    (select round(avg(participant_count), 1) from public.conversations where status <> 'deleted');
+end;
+$$;
+
+-- Day-by-day adoption trend, reconstructed live from existing created_at
+-- timestamps - no new snapshot table needed, since signups/conversation
+-- creation/messages are all immutable creation events (unlike, say,
+-- conversations.status, which gets overwritten in place and so has no
+-- history to look back on without a periodic snapshot job). active_users
+-- is daily active users: distinct senders of a non-deleted message that
+-- day, not a stored field anywhere. p_days is clamped to 180 - this is
+-- moderator-only, but a bare correlated-subquery-per-day plan has no
+-- reason to run against an unbounded range.
+create or replace function public.admin_adoption_trends(p_days integer default 30)
+returns table (
+  day date,
+  new_users bigint,
+  new_conversations bigint,
+  active_users bigint,
+  messages_sent bigint
+)
+language plpgsql
+security definer
+as $$
+declare
+  days_back integer := least(greatest(p_days, 1), 180);
+begin
+  if not public.is_moderator() then
+    raise exception 'not authorized';
+  end if;
+  return query
+  with days as (
+    select generate_series(current_date - (days_back - 1), current_date, interval '1 day')::date as day
+  )
+  select
+    d.day,
+    (select count(*) from public.users u where not u.is_deleted and u.created_at::date = d.day),
+    (select count(*) from public.conversations c where c.status <> 'deleted' and c.created_at::date = d.day),
+    (select count(distinct m.user_id) from public.messages m where m.deleted_at is null and m.created_at::date = d.day),
+    (select count(*) from public.messages m where m.deleted_at is null and m.created_at::date = d.day)
+  from days d
+  order by d.day;
+end;
+$$;
