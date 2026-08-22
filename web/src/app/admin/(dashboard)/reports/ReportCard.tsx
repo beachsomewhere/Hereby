@@ -69,7 +69,7 @@ export function ReportCard({ reportId, targetType, targetId, reason, createdAt, 
           disabled={!!loading}
           className="rounded-lg bg-[#A32D2D] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
         >
-          {loading === "uphold" ? "Working…" : "Uphold"}
+          {loading === "uphold" ? "Working…" : targetType === "message" ? "Uphold & delete message" : "Uphold"}
         </button>
         <button
           onClick={() => resolve("dismiss_report")}

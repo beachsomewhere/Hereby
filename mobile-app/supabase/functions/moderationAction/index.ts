@@ -21,45 +21,90 @@ interface RequestBody {
   reportId?: string;
 }
 
-serve(async (req) => {
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader) return new Response("Unauthorized", { status: 401 });
+// Every other Edge Function in this project has only ever been called from
+// the mobile app (React Native's fetch doesn't enforce CORS - it's a
+// browser-only mechanism), so none of them needed this. This one is also
+// called from web/src/app/admin (a real browser) via supabase-js's
+// functions.invoke(), which sends a preflight OPTIONS request first -
+// without these headers on both the preflight response and the real one,
+// the browser silently blocks the actual request before it ever reaches
+// here, surfacing client-side as a generic "Failed to send a request to
+// the Edge Function" with no server-side error to debug at all.
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
 
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+
+  // Two clients, deliberately - same pattern as checkEligibility: forwarding
+  // the caller's own JWT as the Authorization header (even on a client
+  // constructed with the service-role key) makes Postgres/PostgREST act as
+  // the CALLER's role (authenticated), not service_role - the apikey header
+  // doesn't decide the acting role, the decoded Authorization JWT does.
+  // `supabase` (below) is only for identifying who's calling; every write
+  // this function makes (reports/conversations/messages/users/
+  // moderation_actions - none of them have an UPDATE/INSERT policy open to
+  // `authenticated`, by design) needs `supabaseAdmin`, a genuine
+  // service-role connection with no forwarded header. Confirmed live: using
+  // only the caller-forwarded client here meant every one of those writes
+  // was silently blocked by RLS - no error (a 0-row UPDATE isn't an error),
+  // the function still returned 200 "ok", but nothing in the database ever
+  // actually changed.
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     { global: { headers: { Authorization: authHeader } } }
   );
+  const supabaseAdmin = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
 
   const {
     data: { user: authUser },
   } = await supabase.auth.getUser();
-  if (!authUser) return new Response("Unauthorized", { status: 401 });
+  if (!authUser) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
 
   const { data: moderator } = await supabase
     .from("users")
     .select("id, role")
     .eq("auth_id", authUser.id)
     .single();
-  if (!moderator || moderator.role !== "moderator") return new Response("Forbidden", { status: 403 });
+  if (!moderator || moderator.role !== "moderator") return new Response("Forbidden", { status: 403, headers: corsHeaders });
 
   const { action, targetType, targetId, reason, reportId } = (await req.json()) as RequestBody;
 
   switch (action) {
     case "lock_conversation":
-      await supabase.from("conversations").update({ status: "cooling_down" }).eq("id", targetId);
+      await supabaseAdmin.from("conversations").update({ status: "cooling_down" }).eq("id", targetId);
       break;
     case "delete_message":
-      await supabase.from("messages").update({ deleted_at: new Date().toISOString() }).eq("id", targetId);
+      await supabaseAdmin.from("messages").update({ deleted_at: new Date().toISOString() }).eq("id", targetId);
       break;
     case "suspend_user":
     case "ban_user":
-      await supabase.from("users").update({ is_deleted: action === "ban_user" }).eq("id", targetId);
+      await supabaseAdmin.from("users").update({ is_deleted: action === "ban_user" }).eq("id", targetId);
       break;
     case "uphold_report":
     case "dismiss_report":
+      // Upholding a message report removes it for everyone (soft delete) -
+      // distinct from the reporter's own immediate, client-side-only hide
+      // (see useAppStore.ts#reportedMessageIds), which never touches the
+      // database or any other user. Upholding a user report is
+      // deliberately audit-only here (no auto suspend/ban) - a single
+      // report shouldn't unilaterally trigger an account action with no
+      // further review; suspend_user/ban_user above already exist as
+      // separate, explicit actions a moderator can take on top of this.
+      if (action === "uphold_report" && targetType === "message") {
+        await supabaseAdmin.from("messages").update({ deleted_at: new Date().toISOString() }).eq("id", targetId);
+      }
       if (reportId) {
-        await supabase
+        await supabaseAdmin
           .from("reports")
           .update({
             status: action === "uphold_report" ? "upheld" : "dismissed",
@@ -71,7 +116,7 @@ serve(async (req) => {
       break;
   }
 
-  await supabase.from("moderation_actions").insert({
+  await supabaseAdmin.from("moderation_actions").insert({
     moderator_id: moderator.id,
     target_type: targetType,
     target_id: targetId,
@@ -79,5 +124,5 @@ serve(async (req) => {
     reason,
   });
 
-  return new Response("ok");
+  return new Response("ok", { headers: corsHeaders });
 });
