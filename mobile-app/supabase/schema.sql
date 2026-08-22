@@ -1633,3 +1633,43 @@ begin
   order by d.day;
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Stale-participant sweep. checkEligibility (see that Edge Function) only
+-- ever re-evaluates a participant's state while their own client has the
+-- conversation screen open and polling every 6s - once someone closes the
+-- app or walks away without reopening it, their conversation_participants
+-- row just sits at whatever state ('inside'/'grace') it last had, forever.
+-- Since participant_count only counts 'inside'/'grace' rows
+-- (recompute_participant_count above) and activity_score is driven by
+-- participant_count (recomputeActivity), a conversation everyone has
+-- physically left can keep scoring as active indefinitely with nobody
+-- there. Deliberately a single set-based UPDATE run on a plain pg_cron
+-- schedule - no Edge Function/HTTP round trip needed, and no per-conversation
+-- polling from any client - so this stays cheap at any number of concurrent
+-- chats. Demotes to 'read_only' rather than deleting the row or setting
+-- 'left': the client's own next real checkEligibility call (if the user
+-- ever comes back) still re-evaluates their true state fresh, this is only
+-- a conservative "we haven't heard from you in a while" fallback, mirroring
+-- the same read_only outcome checkEligibility itself uses when a grace
+-- period naturally expires.
+create index if not exists conversation_participants_active_last_check_idx
+  on public.conversation_participants(last_check_at)
+  where state in ('inside', 'grace');
+
+create or replace function public.sweep_stale_participants() returns void
+language sql
+as $$
+  update public.conversation_participants
+  set state = 'read_only',
+      grace_started_at = null
+  where state in ('inside', 'grace')
+    and last_check_at < now() - interval '10 minutes';
+$$;
+
+-- Runs as the role that scheduled it (superuser in Supabase's pg_cron
+-- setup), so - unlike recompute-activity's Edge Function call - this needs
+-- no service-role key/Authorization header at all, nothing to misconfigure.
+select cron.schedule('sweep-stale-participants', '*/5 * * * *', $$
+  select public.sweep_stale_participants();
+$$);

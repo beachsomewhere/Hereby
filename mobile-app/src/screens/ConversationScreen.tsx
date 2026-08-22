@@ -144,9 +144,26 @@ export function ConversationScreen({ route, navigation }: Props) {
         backend.getThreads(conversationId),
       ]);
       console.log(`[timing] getConversation+getThreads: ${Date.now() - t0}ms`);
+
+      // getConversation resolves to undefined (not an error) when the
+      // conversation is gone or no longer selectable under RLS (archived/
+      // deleted) - confirmed live: stale navigation state (e.g. restored
+      // after an app restart, or an old notification tap) pointing at a
+      // long-since-archived conversation left this screen silently
+      // re-polling a dead conversation forever, checkEligibility failing
+      // every 6s with no visible feedback. Bail out the same way
+      // handleLeaveConversation does instead.
+      if (!conv) {
+        hasLeftRef.current = true;
+        Alert.alert("Chat no longer available", "This chat has ended and is no longer available.", [
+          { text: "OK", onPress: () => navigation.goBack() },
+        ]);
+        return;
+      }
+
       setConversation(conv);
       setThreads(threadList);
-      navigation.setOptions({ title: conv?.title ?? "" });
+      navigation.setOptions({ title: conv.title });
 
       // Default to the General thread once threads have loaded, but never
       // stomp on a thread the user has already switched to.
