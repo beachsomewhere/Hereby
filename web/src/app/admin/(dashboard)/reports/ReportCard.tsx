@@ -60,7 +60,7 @@ export function ReportCard({ reportId, targetType, targetId, reason, createdAt, 
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
         placeholder="Resolution notes (optional)"
-        className="mt-3 w-full rounded-lg border border-[#D3D1C7] px-3 py-1.5 text-sm outline-none focus:border-[#2C2C2A]"
+        className="mt-3 w-full rounded-lg border border-[#D3D1C7] bg-white px-3 py-1.5 text-sm text-[#2C2C2A] outline-none focus:border-[#2C2C2A]"
       />
 
       <div className="mt-3 flex gap-2">

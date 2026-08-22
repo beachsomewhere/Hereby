@@ -69,7 +69,7 @@ export default function AdminLoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="w-full rounded-lg border border-[#D3D1C7] px-3 py-2 text-sm outline-none focus:border-[#2C2C2A]"
+              className="w-full rounded-lg border border-[#D3D1C7] bg-white px-3 py-2 text-sm text-[#2C2C2A] outline-none focus:border-[#2C2C2A]"
             />
             <button
               type="submit"
@@ -89,7 +89,7 @@ export default function AdminLoginPage() {
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="123456"
-              className="w-full rounded-lg border border-[#D3D1C7] px-3 py-2 text-sm outline-none focus:border-[#2C2C2A]"
+              className="w-full rounded-lg border border-[#D3D1C7] bg-white px-3 py-2 text-sm text-[#2C2C2A] outline-none focus:border-[#2C2C2A]"
             />
             <button
               type="submit"
