@@ -292,8 +292,17 @@ export function ConversationScreen({ route, navigation }: Props) {
     return () => setActivePushThreadId(undefined);
   }, [activeThreadId]);
 
+  // Confirmed live: handleSend had no re-entry guard at all - several rapid
+  // taps (e.g. because the UI didn't visibly react to the first one) each
+  // independently called sendMessage before the first had a chance to
+  // finish and clear the draft, posting the same message multiple times.
+  // Same in-flight-ref pattern already used by refresh()/refreshMessages()
+  // above.
+  const sendInFlightRef = useRef(false);
   async function handleSend() {
     if (!currentUser || !activeThreadId || !draft.trim() || participantState === "read_only" || participantState === "left") return;
+    if (sendInFlightRef.current) return;
+    sendInFlightRef.current = true;
     try {
       // Appended locally the instant the insert succeeds, rather than
       // waiting on the realtime subscription or the 6s poll to refetch and
@@ -313,6 +322,8 @@ export function ConversationScreen({ route, navigation }: Props) {
       setReplyTo(undefined);
     } catch (err) {
       Alert.alert("Couldn't send message", err instanceof Error ? err.message : "Something went wrong. Try again.");
+    } finally {
+      sendInFlightRef.current = false;
     }
   }
 
