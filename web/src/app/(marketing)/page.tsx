@@ -280,7 +280,8 @@ export default function HomePage() {
         <div className="wrap">
           <p>
             Prototype project. Source on{" "}
-            <a href="https://github.com/beachsomewhere/Hereby">GitHub</a>. <a href="/privacy">Privacy Policy</a>.
+            <a href="https://github.com/beachsomewhere/Hereby">GitHub</a>. <a href="/privacy">Privacy Policy</a>.{" "}
+            <a href="/admin">Admin</a>.
           </p>
         </div>
       </footer>
