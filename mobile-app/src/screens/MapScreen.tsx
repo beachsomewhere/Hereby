@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import MapView, { Circle, Marker, Region } from "react-native-maps";
-import * as Location from "expo-location";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useIsFocused } from "@react-navigation/native";
 import { RootStackParamList } from "../navigation/RootNavigator";
@@ -38,26 +37,18 @@ const DEFAULT_REGION: Region = {
 export function MapScreen({ navigation }: Props) {
   const currentUser = useAppStore((s) => s.currentUser);
   const location = useAppStore(effectiveLocation);
-  const userLocation = useAppStore((s) => s.userLocation);
-  const setUserLocation = useAppStore((s) => s.setUserLocation);
   const devModeEnabled = useAppStore((s) => s.devModeEnabled);
   const devSimulatedLocation = useAppStore((s) => s.devSimulatedLocation);
   const setDevSimulatedLocation = useAppStore((s) => s.setDevSimulatedLocation);
 
-  // Real GPS is otherwise only ever fetched once, during onboarding - if
-  // that permission request didn't succeed (denied, dismissed, a transient
-  // failure), there'd be no location for the rest of the session and no way
-  // to recover short of restarting. Retry here so landing on the map
-  // without one isn't a dead end.
-  useEffect(() => {
-    if (userLocation || devModeEnabled) return;
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") return;
-      const pos = await Location.getCurrentPositionAsync({});
-      setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-    })();
-  }, [userLocation, devModeEnabled, setUserLocation]);
+  // React Navigation's native stack keeps this screen mounted (not
+  // unmounted) while ConversationScreen is pushed on top of it - gating the
+  // poll effect below on focus avoids competing for the same network/CPU
+  // as that screen's own polling while it's the one on top. Real GPS
+  // watching now lives in RootNavigator instead of here, since it needs to
+  // keep running for the whole session, not just while this screen is
+  // focused - see its comment for why.
+  const isFocused = useIsFocused();
 
   const mapRef = useRef<MapView>(null);
   const [region, setRegion] = useState<Region>(
@@ -93,13 +84,11 @@ export function MapScreen({ navigation }: Props) {
     }
   }, [location, region.latitude, region.longitude]);
 
-  // React Navigation's native stack keeps this screen mounted (not
-  // unmounted) while ConversationScreen is pushed on top of it, so without
-  // gating on focus this poll + realtime channel would keep running
-  // indefinitely in the background the whole time a user is inside a chat,
-  // competing for the same network/CPU as that screen's own polling.
-  const isFocused = useIsFocused();
-
+  // Without gating on focus (isFocused, declared above) this poll +
+  // realtime channel would keep running indefinitely in the background the
+  // whole time a user is inside a chat, competing for the same network/CPU
+  // as that screen's own polling - see the note above on why this screen
+  // stays mounted rather than unmounting.
   useEffect(() => {
     if (!isFocused) return;
     refresh();
