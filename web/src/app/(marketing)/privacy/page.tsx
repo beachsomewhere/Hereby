@@ -6,12 +6,9 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <div className="marketing privacy">
+    <div className="marketing article">
       <header>
         <div className="wrap">
-          <a className="back" href="/">
-            &larr; Hereby
-          </a>
           <h1>Privacy Policy</h1>
           <p className="updated">Last updated August 19, 2026</p>
         </div>

@@ -28,6 +28,42 @@
   padding: 0 24px;
 }
 
+.topnav {
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.topnav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 24px;
+  flex-wrap: wrap;
+}
+.topnav-brand {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--ink);
+  text-decoration: none;
+  letter-spacing: -0.01em;
+}
+.topnav-links {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.topnav-links a {
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+.topnav-links a:hover {
+  color: var(--ink);
+}
+
 .marketing header.hero {
   padding: 96px 0 64px;
   text-align: center;
@@ -301,62 +337,62 @@
 }
 
 /* privacy page */
-.marketing.privacy {
+.marketing.article {
   line-height: 1.6;
 }
-.marketing.privacy .wrap {
+.marketing.article .wrap {
   max-width: 720px;
 }
-.marketing.privacy header {
+.marketing.article header {
   padding: 64px 0 32px;
 }
-.marketing.privacy header a.back {
+.marketing.article header a.back {
   color: var(--muted);
   font-size: 0.9rem;
   text-decoration: none;
 }
-.marketing.privacy header a.back:hover {
+.marketing.article header a.back:hover {
   color: var(--ink);
 }
-.marketing.privacy header h1 {
+.marketing.article header h1 {
   font-size: 2.2rem;
   font-weight: 600;
   margin: 16px 0 4px;
   letter-spacing: -0.02em;
 }
-.marketing.privacy header p.updated {
+.marketing.article header p.updated {
   color: var(--faint);
   font-size: 0.9rem;
   margin: 0;
 }
-.marketing.privacy main {
+.marketing.article main {
   padding-bottom: 72px;
 }
-.marketing.privacy h2 {
+.marketing.article h2 {
   font-size: 1.25rem;
   font-weight: 600;
   margin: 40px 0 10px;
   letter-spacing: -0.01em;
 }
-.marketing.privacy p,
-.marketing.privacy li {
+.marketing.article p,
+.marketing.article li {
   color: var(--muted);
   font-size: 0.98rem;
 }
-.marketing.privacy ul {
+.marketing.article ul {
   padding-left: 20px;
   margin: 10px 0;
 }
-.marketing.privacy li {
+.marketing.article li {
   margin: 6px 0;
 }
-.marketing.privacy strong {
+.marketing.article strong {
   color: var(--ink);
 }
-.marketing.privacy a {
+.marketing.article a {
   color: var(--accent-ink);
 }
-.marketing.privacy .callout {
+.marketing.article .callout {
   background: var(--accent-bg);
   color: var(--accent-ink);
   border-radius: 12px;
@@ -364,16 +400,63 @@
   font-size: 0.95rem;
   margin: 24px 0;
 }
-.marketing.privacy .callout strong {
+.marketing.article .callout strong {
   color: var(--accent-ink);
 }
-.marketing.privacy footer {
+.marketing.article footer {
   padding: 32px 0 72px;
   text-align: center;
   color: var(--faint);
   font-size: 0.9rem;
   border-top: 1px solid var(--line);
 }
-.marketing.privacy footer a {
+.marketing.article footer a {
   color: var(--muted);
+}
+
+/* safety page: problem/solution comparison rows */
+.marketing.article .compare {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 20px 0 32px;
+}
+.marketing.article .compare-row {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+@media (max-width: 640px) {
+  .marketing.article .compare-row {
+    flex-direction: column;
+  }
+}
+.marketing.article .compare-card {
+  flex: 1;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.marketing.article .compare-card .compare-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.marketing.article .compare-card.problem {
+  background: #fbe9e9;
+  color: #7a2020;
+}
+.marketing.article .compare-card.problem .compare-label {
+  color: #a32d2d;
+}
+.marketing.article .compare-card.solution {
+  background: #dcefdc;
+  color: #1e4620;
+}
+.marketing.article .compare-card.solution .compare-label {
+  color: #2c6b2f;
 }
