@@ -51,6 +51,31 @@ export function MapScreen({ navigation }: Props) {
   const isFocused = useIsFocused();
 
   const mapRef = useRef<MapView>(null);
+  // Shared across every animateToRegion call site (the GPS-follow effect
+  // below and handleRegionChangeComplete's own gesture-correction) so at
+  // most one is ever in flight at a time. Confirmed live as a real bug:
+  // react-native-maps doesn't settle cleanly when a second animateToRegion
+  // interrupts a first one still in progress - the JS-side `region` state
+  // (which everything, including isVisibleAtZoom/getClusters for every
+  // marker, is derived from) can end up permanently describing something
+  // other than what's actually rendered natively, hiding a conversation's
+  // marker until enough further gestures happen to accidentally resync it.
+  // Longer animations (see the GPS-follow effect) widen the window a
+  // colliding gesture can land in, so this matters more now than it used to.
+  const animatingRef = useRef(false);
+  function animateRegion(next: Region, duration: number) {
+    if (animatingRef.current) {
+      // Something's already animating - jump straight there instead of
+      // stacking a second animateToRegion on top of it.
+      mapRef.current?.animateToRegion(next, 0);
+      return;
+    }
+    animatingRef.current = true;
+    mapRef.current?.animateToRegion(next, duration);
+    setTimeout(() => {
+      animatingRef.current = false;
+    }, duration + 50);
+  }
   const [region, setRegion] = useState<Region>(
     location ? { ...DEFAULT_REGION, latitude: location.lat, longitude: location.lng } : DEFAULT_REGION
   );
@@ -108,10 +133,12 @@ export function MapScreen({ navigation }: Props) {
   // Only kicks in when the current zoom shows nothing, so it never fights
   // deliberate manual zooming once something's already in view.
   //
-  // Animated over ~2.5s rather than a quick snap - real GPS fixes only
+  // Animated over 1.5s rather than a quick snap - real GPS fixes only
   // arrive every ~10s/15m (see RootNavigator's watchPositionAsync config),
-  // so a short animation reads as a jump-pause-jump; stretching it closer
-  // to the update interval reads as continuous drift instead. True
+  // so a short animation reads as a jump-pause-jump; stretching it a bit
+  // reads as drift instead. Kept well under the ~10s gap between fixes
+  // (and routed through animateRegion above) so it's very unlikely to still
+  // be running when the next update - or a manual gesture - arrives. True
   // nav-app-smooth motion would need dead-reckoning interpolation between
   // fixes plus much more frequent GPS polling than this app needs for a
   // stand-around-and-chat use case, so this is a cheap approximation, not
@@ -135,7 +162,7 @@ export function MapScreen({ navigation }: Props) {
             ? { latitudeDelta: deltaForZoom(nearestThreshold), longitudeDelta: deltaForZoom(nearestThreshold) }
             : {}),
         };
-        mapRef.current?.animateToRegion(next, 2500);
+        animateRegion(next, 1500);
         return next;
       });
     })();
@@ -243,15 +270,16 @@ export function MapScreen({ navigation }: Props) {
   // Guards against a real, confirmed-live bug: animateToRegion below
   // changes the region, which itself fires another onRegionChangeComplete -
   // and with the ~11cm epsilon below, virtually any zoom gesture's natural
-  // imprecision re-triggers it. A fast zoom-out-then-in sequence could issue
-  // several overlapping animateToRegion calls, each interrupting the last;
-  // react-native-maps doesn't settle that cleanly, and the JS-side `region`
-  // state could end up permanently describing something other than what's
-  // actually rendered natively - which then feeds isVisibleAtZoom/
-  // getClusters the wrong viewport indefinitely (only a full reload,
-  // resetting all state fresh, recovered). This ref caps it to one
-  // in-flight recenter animation at a time.
-  const recenteringRef = useRef(false);
+  // imprecision re-triggers it. Routed through the shared animateRegion
+  // above (not a local guard) so this also can't collide with the
+  // GPS-follow effect's own animateToRegion call - a fast zoom gesture
+  // landing while a location update is still mid-animation was exactly
+  // the confirmed-live failure mode: the JS-side `region` state could end
+  // up permanently describing something other than what's actually
+  // rendered natively, which then feeds isVisibleAtZoom/getClusters the
+  // wrong viewport - a conversation's marker disappearing at some zoom
+  // levels and not reappearing until further gestures happened to
+  // accidentally resync it.
   function handleRegionChangeComplete(r: Region) {
     if (createVisible || !location) {
       setRegion(r);
@@ -259,15 +287,8 @@ export function MapScreen({ navigation }: Props) {
     }
     const next = { ...r, latitude: location.lat, longitude: location.lng };
     setRegion(next);
-    if (
-      !recenteringRef.current &&
-      (Math.abs(r.latitude - location.lat) > 1e-6 || Math.abs(r.longitude - location.lng) > 1e-6)
-    ) {
-      recenteringRef.current = true;
-      mapRef.current?.animateToRegion(next, 200);
-      setTimeout(() => {
-        recenteringRef.current = false;
-      }, 220);
+    if (Math.abs(r.latitude - location.lat) > 1e-6 || Math.abs(r.longitude - location.lng) > 1e-6) {
+      animateRegion(next, 200);
     }
   }
 
