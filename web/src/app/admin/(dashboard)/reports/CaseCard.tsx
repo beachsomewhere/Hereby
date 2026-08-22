@@ -126,6 +126,9 @@ export function CaseCard({
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className={`rounded-full px-2 py-0.5 font-semibold ${PRIORITY_STYLES[priority]}`}>{priority}</span>
         <span className={`rounded-full px-2 py-0.5 font-medium ${AI_STATUS_STYLES[status]}`}>{AI_STATUS_LABELS[status]}</span>
+        {reportCount === 0 && (
+          <span className="rounded-full bg-[#DCE8F5] px-2 py-0.5 font-medium text-[#1E4E7A]">Detected automatically</span>
+        )}
         {aiRecommendedDismissal && (
           <span className="rounded-full bg-[#DCEFDC] px-2 py-0.5 font-medium text-[#2C6B2F]">AI recommends dismissal</span>
         )}

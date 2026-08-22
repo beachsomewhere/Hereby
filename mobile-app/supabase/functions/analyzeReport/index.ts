@@ -165,6 +165,34 @@ async function callOpenAIModeration(content: string): Promise<ModerationResult> 
   return { flagged: result.flagged, flaggedCategories, topCategory, topScore };
 }
 
+// ---------------------------------------------------------------------------
+// Deterministic PII pattern check - not a model call, $0, safe to run on
+// every message. OpenAI's moderation endpoint has no "doxxing / personal
+// information" category in its taxonomy at all (its categories are
+// harassment/hate/violence/sexual/self-harm), so it's structurally
+// incapable of catching "here's his address, go bother him" - that phrase
+// alone doesn't read as hateful or violent. This is the second, independent
+// signal that closes that gap. Deliberately over-inclusive: the street-
+// address heuristic in particular will flag plenty of harmless mentions
+// ("meet at 123 Main St Starbucks") - that's fine, a false match here only
+// costs an escalation to the context-aware model, which is exactly where
+// "is this actually targeting a specific person" should be judged, not
+// rejected at the pattern-match stage.
+// ---------------------------------------------------------------------------
+const PII_PATTERNS: { kind: string; pattern: RegExp }[] = [
+  { kind: "phone_number", pattern: /(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/ },
+  { kind: "email", pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/ },
+  { kind: "ssn_like", pattern: /\b\d{3}-\d{2}-\d{4}\b/ },
+  { kind: "street_address", pattern: /\b\d{1,6}\s+\w+(\s+\w+){0,3}\s+(street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|court|ct|way|place|pl)\b/i },
+];
+
+function detectPII(content: string): { matched: boolean; kind?: string } {
+  for (const { kind, pattern } of PII_PATTERNS) {
+    if (pattern.test(content)) return { matched: true, kind };
+  }
+  return { matched: false };
+}
+
 function deriveFromLightweight(moderation: ModerationResult): { severity: Severity; priority: Priority } {
   if (!moderation.flagged) return { severity: "low", priority: "P3" };
   const isSafetyCritical = moderation.flaggedCategories.some((c) => SAFETY_CRITICAL_MODERATION_CATEGORIES.includes(c));
@@ -472,7 +500,10 @@ async function callContextualAnalysis(
 // ---------------------------------------------------------------------------
 async function logUsage(
   supabaseAdmin: SupabaseClient,
-  caseId: string,
+  // null for the proactive scan's own free pass, logged before any case
+  // exists yet - ai_moderation_usage_log.case_id is nullable for exactly
+  // this reason (see its own "on delete set null" comment).
+  caseId: string | null,
   callType: "moderation_check" | "contextual_analysis",
   model: string,
   promptTokens: number,
@@ -732,11 +763,51 @@ async function analyzeCase(supabaseAdmin: SupabaseClient, caseId: string): Promi
 }
 
 // ---------------------------------------------------------------------------
+// Proactive scan: fired by trg_scan_new_message on every message send, no
+// report involved. No case exists yet at this point - the whole point of
+// running the free classifier + PII check first is to decide whether one
+// should. The overwhelming majority of messages hit neither signal and
+// this returns having spent nothing beyond the one free API call.
+// Escalation here only looks at content-only signals (no report reasons/
+// count exist yet) - the same short-and-ambiguous heuristic decideEscalation
+// already uses for reports, applied directly since there's no report to
+// derive it from.
+// ---------------------------------------------------------------------------
+async function scanNewMessage(supabaseAdmin: SupabaseClient, messageId: string): Promise<void> {
+  const { data: message } = await supabaseAdmin.from("messages").select("user_id, username, body").eq("id", messageId).maybeSingle();
+  if (!message) return;
+  const content = `${message.username}: ${message.body}`;
+
+  let moderation: ModerationResult;
+  try {
+    moderation = await callOpenAIModeration(content);
+    await logUsage(supabaseAdmin, null, "moderation_check", "omni-moderation-latest", 0, 0, 0, true);
+  } catch (err) {
+    await logUsage(supabaseAdmin, null, "moderation_check", "omni-moderation-latest", 0, 0, 0, false, String(err));
+    return; // Degraded, not lost - the message itself was never at risk, only its proactive scan.
+  }
+
+  const pii = detectPII(content);
+  const shortAndAmbiguous = message.body.length > 0 && message.body.length < 20 && moderation.topScore > 0.1;
+
+  if (!moderation.flagged && !pii.matched && !shortAndAmbiguous) return; // clean - no case created, nothing further spent
+
+  const { data: found } = await supabaseAdmin.rpc("find_or_create_moderation_case_for_scan", {
+    p_target_type: "message",
+    p_target_id: messageId,
+  });
+  const row = Array.isArray(found) ? found[0] : found;
+  if (!row?.case_id) return;
+  await analyzeCase(supabaseAdmin, row.case_id);
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 interface RequestBody {
   caseId?: string;
   sweep?: boolean;
+  messageId?: string;
 }
 
 serve(async (req) => {
@@ -776,6 +847,22 @@ serve(async (req) => {
   }
 
   const body = (await req.json().catch(() => ({}))) as RequestBody;
+
+  if (body.messageId) {
+    // Separate, more specific flag than AI_MODERATION_ENABLED above (which
+    // is still the master kill switch - this mode never runs if that's
+    // off either) - lets proactive scanning be turned on deliberately once
+    // ready, and off independently (e.g. if volume or false-positive rate
+    // turns out to be a problem) without touching the already-live
+    // report-driven path.
+    if (Deno.env.get("AI_PROACTIVE_SCAN_ENABLED") !== "true") {
+      return new Response(JSON.stringify({ skipped: "proactive_scan_disabled" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    await scanNewMessage(supabaseAdmin, body.messageId);
+    return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
 
   if (body.sweep) {
     const { data: deferred } = await supabaseAdmin.from("moderation_cases").select("id").eq("ai_status", "deferred_budget_limit");

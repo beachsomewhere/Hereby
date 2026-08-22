@@ -1713,3 +1713,103 @@ $$;
 select cron.schedule('sweep-stale-participants', '*/5 * * * *', $$
   select public.sweep_stale_participants();
 $$);
+
+-- ---------------------------------------------------------------------------
+-- Proactive moderation: every new message gets a free classification (+ a
+-- free PII pattern check, done in the Edge Function - see analyzeReport's
+-- new scanNewMessage()) the instant it's sent, instead of only ever being
+-- looked at once someone reports it. A user report on a message this
+-- already flagged just reinforces the same case - link_report_to_
+-- moderation_case's own find-or-create loop already dedupes correctly
+-- against the partial unique index below regardless of which path got
+-- there first, so that trigger is deliberately left untouched.
+-- ---------------------------------------------------------------------------
+
+-- Separate, standalone find-or-create for the scan path - deliberately NOT
+-- refactored to share code with link_report_to_moderation_case's own
+-- inline loop above. That trigger is live and already tested; correctness
+-- here comes from the partial unique index both rely on, not from sharing
+-- code, so a little duplicated retry-loop SQL is a safer tradeoff than
+-- touching an already-working critical path.
+create or replace function public.find_or_create_moderation_case_for_scan(
+  p_target_type report_target_type,
+  p_target_id uuid
+) returns table (case_id uuid, is_new boolean)
+language plpgsql
+security definer
+as $$
+declare
+  v_case_id uuid;
+  v_is_new boolean := false;
+  v_reported_user_id uuid;
+  v_snapshot text;
+begin
+  loop
+    select id into v_case_id from public.moderation_cases
+      where target_type = p_target_type and target_id = p_target_id and status = 'open';
+    exit when found;
+
+    if p_target_type = 'message' then
+      select m.user_id, (m.username || ': "' || m.body || '"')
+        into v_reported_user_id, v_snapshot
+        from public.messages m where m.id = p_target_id;
+    elsif p_target_type = 'user' then
+      v_reported_user_id := p_target_id;
+      select 'User: ' || u.username into v_snapshot from public.users u where u.id = p_target_id;
+    else
+      select c.created_by, 'Conversation: ' || c.title into v_reported_user_id, v_snapshot
+        from public.conversations c where c.id = p_target_id;
+    end if;
+
+    begin
+      insert into public.moderation_cases
+        (target_type, target_id, reported_user_id, reported_content_snapshot, report_count)
+      values (p_target_type, p_target_id, v_reported_user_id, v_snapshot, 0)
+      returning id into v_case_id;
+      v_is_new := true;
+      exit;
+    exception when unique_violation then
+      -- Lost the race (or a report beat the scan to it) - loop back and
+      -- pick up whichever case just got committed.
+    end;
+  end loop;
+
+  return query select v_case_id, v_is_new;
+end;
+$$;
+revoke execute on function public.find_or_create_moderation_case_for_scan from public, anon, authenticated;
+grant execute on function public.find_or_create_moderation_case_for_scan to service_role;
+
+-- Same async-dispatch shape as notify_new_message above: AFTER INSERT,
+-- SECURITY DEFINER, entire body exception-wrapped so a failure here can
+-- never block a message send, same Vault-stored service-role key. Points
+-- at analyzeReport's new {messageId} mode instead of notifyNewMessage.
+create or replace function public.scan_new_message() returns trigger
+language plpgsql
+security definer
+as $$
+declare
+  v_service_key text;
+begin
+  begin
+    select decrypted_secret into v_service_key
+    from vault.decrypted_secrets
+    where name = 'notify_new_message_service_key';
+
+    perform net.http_post(
+      url := 'https://fuhdxvyqahwmikpgiikk.functions.supabase.co/analyzeReport',
+      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_service_key),
+      body := jsonb_build_object('messageId', new.id)
+    );
+  exception when others then
+    raise warning 'scan_new_message failed: %', sqlerrm;
+  end;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_scan_new_message on public.messages;
+create trigger trg_scan_new_message
+  after insert on public.messages
+  for each row execute function public.scan_new_message();
