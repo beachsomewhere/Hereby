@@ -31,6 +31,15 @@ serve(async (req) => {
   const { data: message } = await supabase.from("messages").select("*").eq("id", messageId).maybeSingle();
   if (!message) return new Response("Message not found", { status: 404 });
 
+  // Previously just the sender's name and message body - gave no sense of
+  // which chat or thread it came from once you're back on the map with
+  // several nearby. title/subtitle are iOS-only fields (Expo's push API);
+  // Android silently drops subtitle and just shows title+body, no error.
+  const [{ data: conversation }, { data: thread }] = await Promise.all([
+    supabase.from("conversations").select("title").eq("id", message.conversation_id).maybeSingle(),
+    supabase.from("threads").select("title").eq("id", message.thread_id).maybeSingle(),
+  ]);
+
   const { data: recipients } = await supabase
     .from("conversation_participants")
     .select("user_id")
@@ -47,8 +56,9 @@ serve(async (req) => {
 
   const pushMessages = tokens.map((t) => ({
     to: t.expo_push_token,
-    title: message.username,
-    body: message.body,
+    title: conversation?.title ?? "Hereby",
+    subtitle: thread?.title,
+    body: `${message.username}: ${message.body}`,
     data: { conversationId: message.conversation_id, threadId: message.thread_id },
   }));
 
