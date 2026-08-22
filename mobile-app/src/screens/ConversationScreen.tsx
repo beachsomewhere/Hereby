@@ -23,6 +23,7 @@ import * as backend from "../services/supabaseBackend";
 import * as authService from "../services/authService";
 import { ConfirmationType, ConversationSummary, Message, ParticipantState, Thread, User } from "../services/types";
 import { MessageBubble } from "../components/MessageBubble";
+import { NearbyBadge } from "../components/NearbyBadge";
 import { ProfileCard } from "../components/ProfileCard";
 import { CreateThreadSheet } from "../components/CreateThreadSheet";
 import { ReportMessageSheet } from "../components/ReportMessageSheet";
@@ -204,9 +205,12 @@ export function ConversationScreen({ route, navigation }: Props) {
   useEffect(() => {
     navigation.setOptions({
       headerRight: () => (
-        <Pressable onPress={() => setMenuVisible(true)} hitSlop={10} style={styles.headerMenuButton}>
-          <Text style={styles.headerMenuButtonText}>•••</Text>
-        </Pressable>
+        <View style={styles.headerRightRow}>
+          <NearbyBadge />
+          <Pressable onPress={() => setMenuVisible(true)} hitSlop={10} style={styles.headerMenuButton}>
+            <Text style={styles.headerMenuButtonText}>•••</Text>
+          </Pressable>
+        </View>
       ),
     });
   }, [navigation]);
@@ -751,6 +755,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "white" },
   banner: { backgroundColor: "#FAEEDA", padding: 10 },
   bannerText: { fontSize: 12, color: "#412402", textAlign: "center" },
+  headerRightRow: { flexDirection: "row", alignItems: "center" },
   headerMenuButton: { paddingHorizontal: 8, paddingVertical: 4 },
   headerMenuButtonText: { fontSize: 18, color: "#2C2C2A", fontWeight: "600" },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },

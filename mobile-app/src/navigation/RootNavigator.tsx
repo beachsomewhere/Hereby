@@ -8,6 +8,7 @@ import { OnboardingScreen } from "../screens/OnboardingScreen";
 import { MapScreen } from "../screens/MapScreen";
 import { ConversationScreen } from "../screens/ConversationScreen";
 import { DevPanelScreen } from "../screens/DevPanelScreen";
+import { NearbyBadge } from "../components/NearbyBadge";
 
 export type RootStackParamList = {
   Onboarding: undefined;
@@ -77,7 +78,11 @@ export function RootNavigator() {
             component={ConversationScreen}
             options={{ title: "" }}
           />
-          <Stack.Screen name="DevPanel" component={DevPanelScreen} options={{ title: "Developer mode" }} />
+          <Stack.Screen
+            name="DevPanel"
+            component={DevPanelScreen}
+            options={{ title: "Developer mode", headerRight: () => <NearbyBadge /> }}
+          />
         </>
       )}
     </Stack.Navigator>

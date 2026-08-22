@@ -107,6 +107,15 @@ export function MapScreen({ navigation }: Props) {
   // nearest available one instead of landing on an apparently-empty map.
   // Only kicks in when the current zoom shows nothing, so it never fights
   // deliberate manual zooming once something's already in view.
+  //
+  // Animated over ~2.5s rather than a quick snap - real GPS fixes only
+  // arrive every ~10s/15m (see RootNavigator's watchPositionAsync config),
+  // so a short animation reads as a jump-pause-jump; stretching it closer
+  // to the update interval reads as continuous drift instead. True
+  // nav-app-smooth motion would need dead-reckoning interpolation between
+  // fixes plus much more frequent GPS polling than this app needs for a
+  // stand-around-and-chat use case, so this is a cheap approximation, not
+  // that.
   useEffect(() => {
     if (!location) return;
     (async () => {
@@ -126,7 +135,7 @@ export function MapScreen({ navigation }: Props) {
             ? { latitudeDelta: deltaForZoom(nearestThreshold), longitudeDelta: deltaForZoom(nearestThreshold) }
             : {}),
         };
-        mapRef.current?.animateToRegion(next, 500);
+        mapRef.current?.animateToRegion(next, 2500);
         return next;
       });
     })();
@@ -217,13 +226,6 @@ export function MapScreen({ navigation }: Props) {
     preOpenRegionRef.current = region;
     setCreateLocation(center);
     setCreateVisible(true);
-  }
-
-  function handleRecenter() {
-    if (!location) return;
-    const next = { ...region, latitude: location.lat, longitude: location.lng };
-    setRegion(next);
-    mapRef.current?.animateToRegion(next, 400);
   }
 
   // The user is always the center of their own map - there's no reason to
@@ -430,12 +432,6 @@ export function MapScreen({ navigation }: Props) {
         </View>
       )}
 
-      {location && (
-        <Pressable style={styles.recenterButton} onPress={handleRecenter}>
-          <Text style={styles.recenterButtonText}>⌖</Text>
-        </Pressable>
-      )}
-
       <Pressable style={styles.startChatButton} onPress={handleStartChatPress}>
         <Text style={styles.startChatButtonText}>Start chat</Text>
       </Pressable>
@@ -485,20 +481,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
   },
   startChatButtonText: { color: "white", fontSize: 15, fontWeight: "500" },
-  recenterButton: {
-    position: "absolute",
-    bottom: 36,
-    right: 16,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "white",
-    borderWidth: 1,
-    borderColor: "#D3D1C7",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  recenterButtonText: { fontSize: 22, color: "#2C2C2A" },
   emptyState: { position: "absolute", top: 100, left: 24, right: 24, alignItems: "center" },
   emptyStateText: { fontSize: 13, color: "#5F5E5A", textAlign: "center", backgroundColor: "rgba(255,255,255,0.9)", padding: 12, borderRadius: 10 },
 });
