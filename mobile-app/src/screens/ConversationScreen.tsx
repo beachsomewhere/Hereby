@@ -458,6 +458,22 @@ export function ConversationScreen({ route, navigation }: Props) {
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const NEAR_BOTTOM_THRESHOLD = 120;
 
+  // scrollToEnd() alone can land just short of the true bottom - confirmed
+  // live: entering a conversation consistently needed a small manual
+  // scroll to see the newest message. onContentSizeChange fires the moment
+  // the list's reported content height changes, but with variable-height
+  // items like MessageBubble (wrapping text, optional reply-quote, avatar)
+  // that reported height can still be a frame or two behind what's
+  // actually laid out - scrollToEnd computes against whatever height was
+  // current at the exact instant it's called. A single deferred follow-up
+  // call, after layout has had a moment to settle, closes that gap without
+  // needing a visible second animation (the immediate call already gets
+  // close enough that this one is imperceptible).
+  function scrollToEndRobust(animated: boolean) {
+    messageListRef.current?.scrollToEnd({ animated });
+    setTimeout(() => messageListRef.current?.scrollToEnd({ animated: false }), 80);
+  }
+
   function handleMessagesScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
     const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
@@ -467,14 +483,14 @@ export function ConversationScreen({ route, navigation }: Props) {
   }
 
   function jumpToLatest() {
-    messageListRef.current?.scrollToEnd({ animated: true });
+    scrollToEndRobust(true);
     isNearBottomRef.current = true;
     setShowJumpToLatest(false);
   }
 
   useEffect(() => {
     if (activeThreadId) {
-      messageListRef.current?.scrollToEnd({ animated: false });
+      scrollToEndRobust(false);
       isNearBottomRef.current = true;
       setShowJumpToLatest(false);
     }
@@ -520,6 +536,15 @@ export function ConversationScreen({ route, navigation }: Props) {
       <FlatList
         ref={messageListRef}
         data={visibleMessages}
+        // FlatList's default initialNumToRender (10) only renders the
+        // first 10 items on first pass - confirmed live as the real cause
+        // of landing short of the true bottom on entering a conversation
+        // with more messages than that: scrollToEnd() was scrolling to the
+        // end of that partial 10-item render window, not the actual last
+        // message, since the rest hadn't been mounted/measured yet.
+        // Message bubbles are small/cheap to render, so rendering more up
+        // front costs little.
+        initialNumToRender={50}
         onContentSizeChange={() => {
           // Only auto-follow new content if already near the bottom -
           // otherwise a message arriving while reading back through
@@ -528,7 +553,7 @@ export function ConversationScreen({ route, navigation }: Props) {
           // both scroll unconditionally on their own, so this only governs
           // the "someone else's new message arrived" case.
           if (isNearBottomRef.current) {
-            messageListRef.current?.scrollToEnd({ animated: false });
+            scrollToEndRobust(false);
           }
         }}
         onScroll={handleMessagesScroll}
