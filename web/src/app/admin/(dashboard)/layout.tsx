@@ -33,11 +33,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
   if (!isModerator) redirect("/admin/not-authorized");
 
+  // Same visual language as the marketing site's sticky TopNav (see
+  // (marketing)/TopNav.tsx) - same palette, same sticky/border treatment -
+  // kept as Tailwind rather than importing marketing.css directly, since
+  // that file's broader resets are deliberately scoped away from /admin
+  // (see its own header comment).
   return (
     <div className="min-h-screen bg-[#FAF9F5]">
-      <nav className="flex items-center justify-between border-b border-[#EDEBE3] bg-white px-6 py-3">
-        <div className="flex items-center gap-6">
-          <span className="text-sm font-semibold text-[#2C2C2A]">Hereby admin</span>
+      <nav className="sticky top-0 z-10 flex items-center justify-between border-b border-[#EDEBE3] bg-[#FAF9F5] px-6 py-3.5">
+        <div className="flex items-center gap-5">
+          <a href="/admin" className="text-base font-semibold tracking-tight text-[#2C2C2A]">
+            Hereby admin
+          </a>
           <a href="/admin" className="text-sm text-[#5F5E5A] hover:text-[#2C2C2A]">
             Dashboard
           </a>
@@ -45,7 +52,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
             Reports
           </a>
         </div>
-        <SignOutButton />
+        <div className="flex items-center gap-5">
+          <a href="/" className="text-sm text-[#5F5E5A] hover:text-[#2C2C2A]">
+            Hereby.help
+          </a>
+          <SignOutButton />
+        </div>
       </nav>
       <main className="mx-auto max-w-4xl px-6 py-10">{children}</main>
     </div>

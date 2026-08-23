@@ -53,9 +53,10 @@ export default function SafetyPage() {
 
           <div className="callout">
             <strong>The short version:</strong> every account is a real, verified person, not a disposable
-            burner. Every report is reviewed automatically within seconds, with a human always making the
-            final call on anything serious. Chats are temporary and permanently deleted, not a permanent
-            public record that harassment campaigns can pile onto.
+            burner. Every message is actively reviewed by AI the instant it&rsquo;s sent, not only when
+            someone reports it, with a human always making the final call on anything serious. Chats are
+            temporary and permanently deleted, not a permanent public record that harassment campaigns can
+            pile onto.
           </div>
 
           <h2>Anonymous-feeling, not anonymous</h2>
@@ -74,21 +75,22 @@ export default function SafetyPage() {
             works in both directions.
           </p>
 
-          <h2>Every report gets reviewed automatically, in seconds</h2>
+          <h2>Every message is actively reviewed - not just the ones someone reports</h2>
           <div className="compare">
             <CompareRow
-              problem="Moderation on apps like Yik Yak depended on users flagging content and understaffed teams working through a queue - by the time anything happened, the damage was already done and had already spread."
-              solution="Every report triggers an AI review within seconds: a first pass checks the content itself, and anything ambiguous or higher-risk gets a deeper contextual pass that weighs severity, category, and confidence before deciding what happens next."
+              problem="Moderation on apps like Yik Yak depended entirely on users flagging content and understaffed teams working through a queue - if nobody reported it (the target stayed quiet, or a chat just went quiet and disappeared), it was never looked at by anyone, ever."
+              solution="Every message is scanned automatically the instant it's sent - not only after someone reports it. A free classifier plus a pattern check for personal information (phone numbers, emails, addresses) run on everything; anything either one flags gets a deeper, context-aware AI pass within seconds. A report is a second way in, not the only one."
             />
           </div>
           <p>
-            For content that&rsquo;s clearly a serious violation - a credible threat, targeted harassment -
-            Hereby can remove it automatically within moments, before more people see it. That&rsquo;s
-            deliberately not the same as an AI banning someone on its own: removing a message and taking
-            action against an account are different things, and a human always reviews the case before
-            anything happens to the account itself. The bar for automatic removal is also tiered - it takes
-            far less certainty to act on something that looks like a threat than it does on something that
-            merely looks like spam.
+            For content that&rsquo;s clearly a serious violation - a credible threat, targeted harassment,
+            doxxing - Hereby can remove it automatically within moments, often before anyone had to report
+            it at all. That&rsquo;s deliberately not the same as an AI banning someone on its own: removing a
+            message and taking action against an account are different things, and a human always reviews
+            the case before anything happens to the account itself. The bar for automatic removal is also
+            tiered - it takes far less certainty to act on something that looks like a threat than it does
+            on something that merely looks like spam. The overwhelming majority of messages are never
+            flagged by anything and cost nothing beyond that one automatic check.
           </p>
 
           <h2>Temporary by design, not a permanent record</h2>
