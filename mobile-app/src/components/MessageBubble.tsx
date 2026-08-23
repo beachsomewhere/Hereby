@@ -89,7 +89,7 @@ function MessageBubbleImpl({
             >
               <Text style={[styles.voteButtonText, myVote === "upvote" && styles.voteButtonTextUpActive]}>▲</Text>
             </Pressable>
-            <Text style={[styles.voteCount, isOwn && styles.voteCountOwn]}>{netVotes}</Text>
+            <Text style={styles.voteCount}>{netVotes}</Text>
             <Pressable
               onPress={() => onVote("downvote")}
               hitSlop={8}
@@ -102,9 +102,11 @@ function MessageBubbleImpl({
               with no real downside to a stray tap, unlike Report (which
               only lives in the long-press menu below, since it already
               goes through its own confirm dialog in ConversationScreen and
-              doesn't need to compete for space here). */}
-          <Pressable onPress={onReply} hitSlop={8}>
-            <Text style={[styles.replyLink, isOwn && styles.replyLinkOwn]}>↩ Reply</Text>
+              doesn't need to compete for space here). Icon-only circular
+              chip, matching the vote buttons' pill styling rather than a
+              plain text link. */}
+          <Pressable onPress={onReply} hitSlop={8} style={styles.replyButton}>
+            <Text style={styles.replyButtonText}>↪</Text>
           </Pressable>
         </View>
       </Pressable>
@@ -193,17 +195,39 @@ const styles = StyleSheet.create({
   body: { fontSize: 14, color: "#2C2C2A" },
   bodyOwn: { color: "white" },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 6 },
-  replyLink: { fontSize: 11, color: "#5F5E5A" },
-  replyLinkOwn: { color: "#D3D1C7" },
-  voteRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  voteButton: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  voteButtonText: { fontSize: 16, color: "#B4B2A9" },
+  // Circular pill chips (matching a reference upvote/downvote + reply
+  // treatment the user liked) rather than the previous plain
+  // padding-and-radius buttons and a bare text link - a light gray circle
+  // regardless of isOwn (reads fine as a subtle inset chip on both the
+  // light and the dark "own message" bubble, so no separate isOwn variant
+  // needed for the chrome itself, only for the active vote states below).
+  voteRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  voteButton: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#EDEBE3",
+  },
+  voteButtonText: { fontSize: 12, color: "#2C2C2A" },
   voteButtonUpActive: { backgroundColor: "#DCEFDC" },
   voteButtonTextUpActive: { color: "#2C6B2F" },
   voteButtonDownActive: { backgroundColor: "#F5DCDC" },
   voteButtonTextDownActive: { color: "#A32D2D" },
-  voteCount: { fontSize: 13, fontWeight: "500", color: "#5F5E5A", minWidth: 18, textAlign: "center" },
-  voteCountOwn: { color: "#D3D1C7" },
+  // Bold teal regardless of isOwn/vote state, same reasoning as the chip
+  // background above - bright enough to read clearly on both the light and
+  // dark bubble.
+  voteCount: { fontSize: 13, fontWeight: "700", color: "#14B8A6", minWidth: 20, textAlign: "center" },
+  replyButton: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#EDEBE3",
+  },
+  replyButtonText: { fontSize: 13, color: "#2C2C2A" },
   time: { fontSize: 10, color: "#888780", marginLeft: 8 },
   timeOwn: { color: "#B4B2A9" },
   contextMenuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
