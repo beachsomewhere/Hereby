@@ -460,3 +460,18 @@
 .marketing.article .compare-card.solution .compare-label {
   color: #2c6b2f;
 }
+
+/* faq page */
+.marketing.article .qa {
+  margin: 20px 0;
+}
+.marketing.article .qa h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0 0 6px;
+  letter-spacing: -0.005em;
+}
+.marketing.article .qa-answer p {
+  margin: 0;
+}
