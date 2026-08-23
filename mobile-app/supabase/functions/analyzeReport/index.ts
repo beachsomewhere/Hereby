@@ -527,7 +527,7 @@ async function logUsage(
 // ---------------------------------------------------------------------------
 // Core pipeline for a single case
 // ---------------------------------------------------------------------------
-async function analyzeCase(supabaseAdmin: SupabaseClient, caseId: string): Promise<void> {
+async function analyzeCase(supabaseAdmin: SupabaseClient, caseId: string, precomputedModeration?: ModerationResult): Promise<void> {
   const { data: modCase } = await supabaseAdmin
     .from("moderation_cases")
     .select("*")
@@ -547,17 +547,27 @@ async function analyzeCase(supabaseAdmin: SupabaseClient, caseId: string): Promi
   const content = (await loadLiveContent(supabaseAdmin, modCase, reports)) ?? modCase.reported_content_snapshot ?? "";
 
   // 1. Lightweight pass - always runs, free, exempt from the circuit breaker.
+  // Skipped when scanNewMessage already ran it moments ago for this exact
+  // content and passed the result through - confirmed live as a real
+  // contributor to Edge Function invocations running long enough to
+  // starve concurrent ones (checkEligibility in particular): every
+  // escalated proactive scan was making the free call TWICE in a row
+  // before ever reaching the slow contextual pass.
   let moderation: ModerationResult;
-  try {
-    moderation = await callOpenAIModeration(content);
-    await logUsage(supabaseAdmin, caseId, "moderation_check", "omni-moderation-latest", 0, 0, 0, true);
-  } catch (err) {
-    await logUsage(supabaseAdmin, caseId, "moderation_check", "omni-moderation-latest", 0, 0, 0, false, String(err));
-    await supabaseAdmin
-      .from("moderation_cases")
-      .update({ ai_status: "analysis_failed", requires_human_review: true })
-      .eq("id", caseId);
-    return;
+  if (precomputedModeration) {
+    moderation = precomputedModeration;
+  } else {
+    try {
+      moderation = await callOpenAIModeration(content);
+      await logUsage(supabaseAdmin, caseId, "moderation_check", "omni-moderation-latest", 0, 0, 0, true);
+    } catch (err) {
+      await logUsage(supabaseAdmin, caseId, "moderation_check", "omni-moderation-latest", 0, 0, 0, false, String(err));
+      await supabaseAdmin
+        .from("moderation_cases")
+        .update({ ai_status: "analysis_failed", requires_human_review: true })
+        .eq("id", caseId);
+      return;
+    }
   }
   await supabaseAdmin
     .from("moderation_cases")
@@ -798,7 +808,7 @@ async function scanNewMessage(supabaseAdmin: SupabaseClient, messageId: string):
   });
   const row = Array.isArray(found) ? found[0] : found;
   if (!row?.case_id) return;
-  await analyzeCase(supabaseAdmin, row.case_id);
+  await analyzeCase(supabaseAdmin, row.case_id, moderation);
 }
 
 // ---------------------------------------------------------------------------
@@ -860,6 +870,22 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    // Confirmed live as a real problem: scanNewMessage can chain up to
+    // three sequential OpenAI calls (free check, a second free check
+    // inside analyzeCase before the fix above, then the slow contextual
+    // pass) before ever responding - net.http_post (the trigger) sat
+    // waiting the whole time, and a burst of a few messages at once was
+    // enough to exhaust Edge Function concurrency and start failing
+    // unrelated concurrent calls (checkEligibility in particular).
+    // EdgeRuntime.waitUntil (Supabase's own Background Tasks mechanism)
+    // lets this respond immediately and keep working after - only for
+    // isInternalCall (trigger-fired, nothing waits on the response body)
+    // since there's no future call site that would need this mode's
+    // result synchronously anyway.
+    if (isInternalCall) {
+      EdgeRuntime.waitUntil(scanNewMessage(supabaseAdmin, body.messageId));
+      return new Response(JSON.stringify({ accepted: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
     await scanNewMessage(supabaseAdmin, body.messageId);
     return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
@@ -875,6 +901,16 @@ serve(async (req) => {
   }
 
   if (!body.caseId) return new Response("Missing caseId", { status: 400, headers: corsHeaders });
+  // Same reasoning as the messageId branch above - this is also how
+  // link_report_to_moderation_case's trigger reaches this function, so a
+  // burst of reports had the same concurrency exposure as a burst of
+  // messages did. The dashboard's own "Re-run AI Analysis" button
+  // (isInternalCall false) keeps awaiting synchronously, since a
+  // moderator clicking it wants to see it actually finish.
+  if (isInternalCall) {
+    EdgeRuntime.waitUntil(analyzeCase(supabaseAdmin, body.caseId));
+    return new Response(JSON.stringify({ accepted: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   await analyzeCase(supabaseAdmin, body.caseId);
   return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });
