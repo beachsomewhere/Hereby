@@ -48,7 +48,7 @@ function MessageBubbleImpl({
       accessibilityRole="button"
       accessibilityLabel={`Open ${message.username}'s profile`}
     >
-      <Avatar username={message.username} herebieId={message.authorAvatarIcon} size={44} />
+      <Avatar username={message.username} herebieId={message.authorAvatarIcon} size={66} />
     </Pressable>
   );
 
@@ -77,6 +77,11 @@ function MessageBubbleImpl({
         onLongPress={() => setContextMenuVisible(true)}
         delayLongPress={350}
       >
+        {/* Speech-bubble tail pointing back at the Herebie that's now
+            outside the bubble entirely - border-triangle trick (a
+            zero-size box with one colored border edge), positioned to
+            poke out past the bubble's own edge via a negative offset. */}
+        <View style={[styles.tail, isOwn ? styles.tailRight : styles.tailLeft]} />
         <Pressable onPress={onOpenProfile} style={styles.authorRow}>
           <View style={styles.authorRowLeft}>
             <Text style={[styles.username, isOwn && styles.usernameOwn]} numberOfLines={1}>
@@ -213,14 +218,23 @@ const styles = StyleSheet.create({
   // message - confirmed against a deliberately long test message.
   row: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginVertical: 4, paddingHorizontal: 12 },
   rowOwn: { justifyContent: "flex-end" },
-  // maxWidth trimmed from 82% to make room for the 44pt Herebie + gap now
-  // living outside the bubble (previously the only thing in the row).
-  bubble: { backgroundColor: "#F1EFE8", borderRadius: 14, padding: 10, maxWidth: "74%" },
+  // maxWidth trimmed from 82% to make room for the Herebie + gap now
+  // living outside the bubble (previously the only thing in the row) -
+  // tightened further alongside the 44pt -> 66pt size bump.
+  bubble: { backgroundColor: "#F1EFE8", borderRadius: 14, padding: 10, maxWidth: "68%" },
   bubbleOwn: { backgroundColor: "#2C2C2A" },
   // No background/border of its own - just a tap target around the
-  // Herebie itself, sized to the 44pt spec with a little slop for the tap
+  // Herebie itself. 66pt (50% larger than the original 44pt spec, per
+  // the user's own follow-up adjustment) with a little slop for the tap
   // area without inflating the visible artwork.
-  herebieButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  herebieButton: { width: 66, height: 66, alignItems: "center", justifyContent: "center" },
+  // Border-triangle: a zero-size box with only one edge's border colored,
+  // the other two transparent - the classic cross-platform way to draw a
+  // triangle without an image or SVG. top() is roughly where the author
+  // row sits, matching the Herebie's own vertical position.
+  tail: { position: "absolute", top: 14, width: 0, height: 0, borderTopWidth: 7, borderBottomWidth: 7 },
+  tailLeft: { left: -8, borderRightWidth: 9, borderTopColor: "transparent", borderBottomColor: "transparent", borderRightColor: "#F1EFE8" },
+  tailRight: { right: -8, borderLeftWidth: 9, borderTopColor: "transparent", borderBottomColor: "transparent", borderLeftColor: "#2C2C2A" },
   reportedText: { fontSize: 13, fontStyle: "italic", color: "#888780" },
   reportedTextOwn: { color: "#B4B2A9" },
   authorRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
