@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import { ConfirmationType, Message } from "../services/types";
 import { Avatar } from "./Avatar";
 import { maskProfanity } from "../services/profanityFilter";
@@ -120,11 +119,7 @@ function MessageBubbleImpl({
               hitSlop={10}
               style={[styles.voteButton, myVote === "upvote" && styles.voteButtonUpActive]}
             >
-              <Ionicons
-                name={myVote === "upvote" ? "thumbs-up" : "thumbs-up-outline"}
-                size={11}
-                color={myVote === "upvote" ? "white" : "#2C2C2A"}
-              />
+              <Text style={[styles.voteButtonText, myVote === "upvote" && styles.voteButtonTextUpActive]}>▲</Text>
             </Pressable>
             <Text style={styles.voteCount}>{netVotes}</Text>
             <Pressable
@@ -132,11 +127,7 @@ function MessageBubbleImpl({
               hitSlop={10}
               style={[styles.voteButton, myVote === "downvote" && styles.voteButtonDownActive]}
             >
-              <Ionicons
-                name={myVote === "downvote" ? "thumbs-down" : "thumbs-down-outline"}
-                size={11}
-                color={myVote === "downvote" ? "white" : "#2C2C2A"}
-              />
+              <Text style={[styles.voteButtonText, myVote === "downvote" && styles.voteButtonTextDownActive]}>▼</Text>
             </Pressable>
           </View>
           {/* Always visible - a reply is a normal, frequent interaction
@@ -147,7 +138,7 @@ function MessageBubbleImpl({
               (arrow-redo) until a custom reply asset replaces it - no
               longer the bare "↪" glyph. */}
           <Pressable onPress={onReply} hitSlop={10} style={styles.replyButton}>
-            <Ionicons name="arrow-redo-outline" size={11} color="#2C2C2A" />
+            <Text style={styles.replyButtonText}>↪</Text>
           </Pressable>
         </View>
       </Pressable>
@@ -274,12 +265,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#EDEBE3",
   },
-  // Solid fill (not a light tint) once it's your vote - the icon itself
-  // switches to the solid Ionicons variant in white to match, per the
-  // reference: outline-on-gray when unselected, solid-on-color when
-  // selected.
+  voteButtonText: { fontSize: 12, color: "#2C2C2A" },
   voteButtonUpActive: { backgroundColor: "#2C6B2F" },
+  voteButtonTextUpActive: { color: "white" },
   voteButtonDownActive: { backgroundColor: "#A32D2D" },
+  voteButtonTextDownActive: { color: "white" },
   // Bold teal regardless of isOwn/vote state, same reasoning as the chip
   // background above - bright enough to read clearly on both the light and
   // dark bubble.
@@ -292,6 +282,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#EDEBE3",
   },
+  replyButtonText: { fontSize: 13, color: "#2C2C2A" },
   time: { fontSize: 10, color: "#888780", marginLeft: 8 },
   timeOwn: { color: "#B4B2A9" },
   contextMenuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
