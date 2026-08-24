@@ -31,7 +31,7 @@ import { distanceMeters, snapToGrid, jitter } from "./geo";
 import { computeActivityScore, computeRenderSize, minutesBetween, nextStatus } from "./activityScore";
 import { SCENARIOS, ScenarioName } from "../dev/scenarios";
 import { MIN_RADIUS_M, MAX_RADIUS_M } from "./clustering";
-import { unlockedIcons } from "./avatarIcons";
+import { unlockedHerebies } from "./herebies";
 import { generatePseudonym } from "./pseudonym";
 
 // ---------------------------------------------------------------------------
@@ -186,8 +186,8 @@ export async function getUser(userId: string): Promise<User | undefined> {
   return users.get(userId);
 }
 
-// Only ever sets an icon the user has actually unlocked at their current
-// level (see avatarIcons.ts#unlockedIcons) - defends against a stale
+// Only ever sets a Herebie the user has actually unlocked at their current
+// level (see herebies.ts#unlockedHerebies) - defends against a stale
 // picker selection made before a level dropped out of sync client-side.
 //
 // Returns a new object (rather than mutating in place, unlike voteMessage's
@@ -198,11 +198,11 @@ export async function getUser(userId: string): Promise<User | undefined> {
 // unrelated re-render happened to catch up. Replacing the map entry with
 // this exact object (not a second, detached copy) keeps voteMessage's
 // later in-place mutations landing on the object the UI is actually holding.
-export async function updateAvatarIcon(userId: string, icon: string): Promise<User | undefined> {
+export async function updateAvatarIcon(userId: string, herebieId: string): Promise<User | undefined> {
   const user = users.get(userId);
   if (!user) return undefined;
-  if (!unlockedIcons(user.level).some((i) => i.icon === icon)) return user;
-  const updated: User = { ...user, avatarIcon: icon };
+  if (!unlockedHerebies(user.level).some((h) => h.id === herebieId)) return user;
+  const updated: User = { ...user, avatarIcon: herebieId };
   users.set(userId, updated);
   return updated;
 }

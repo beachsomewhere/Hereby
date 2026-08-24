@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { ConfirmationType, Message } from "../services/types";
 import { Avatar } from "./Avatar";
 import { maskProfanity } from "../services/profanityFilter";
@@ -35,21 +36,42 @@ function MessageBubbleImpl({
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const netVotes = upvotes - downvotes;
 
+  // The Herebie lives outside the bubble now (left of others' messages,
+  // right of the user's own, via row/rowOwn's flex-direction-driven
+  // ordering below) - both it and the username open the same profile
+  // card, no separate navigation path.
+  const herebie = (
+    <Pressable
+      onPress={onOpenProfile}
+      hitSlop={4}
+      style={styles.herebieButton}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${message.username}'s profile`}
+    >
+      <Avatar username={message.username} herebieId={message.authorAvatarIcon} size={44} />
+    </Pressable>
+  );
+
   // A reported message stays in place (so the conversation doesn't visibly
   // jump/reflow) but its content is replaced entirely - visible that
   // something was here and hidden, without still showing what it said.
+  // Keeps the Herebie so the layout doesn't jump when a message in the
+  // middle of a conversation gets reported.
   if (isReported) {
     return (
       <View style={[styles.row, isOwn && styles.rowOwn]}>
+        {!isOwn && herebie}
         <View style={[styles.bubble, isOwn && styles.bubbleOwn]}>
           <Text style={[styles.reportedText, isOwn && styles.reportedTextOwn]}>Message reported</Text>
         </View>
+        {isOwn && herebie}
       </View>
     );
   }
 
   return (
     <View style={[styles.row, isOwn && styles.rowOwn]}>
+      {!isOwn && herebie}
       <Pressable
         style={[styles.bubble, isOwn && styles.bubbleOwn]}
         onLongPress={() => setContextMenuVisible(true)}
@@ -57,8 +79,7 @@ function MessageBubbleImpl({
       >
         <Pressable onPress={onOpenProfile} style={styles.authorRow}>
           <View style={styles.authorRowLeft}>
-            <Avatar username={message.username} avatarIcon={message.authorAvatarIcon} size={18} />
-            <Text style={[styles.username, isOwn && styles.usernameOwn]}>
+            <Text style={[styles.username, isOwn && styles.usernameOwn]} numberOfLines={1}>
               {message.username} <Text style={[styles.level, isOwn && styles.levelOwn]}>· Lv {message.authorLevel}</Text>
             </Text>
           </View>
@@ -82,34 +103,50 @@ function MessageBubbleImpl({
 
         <View style={styles.metaRow}>
           <View style={styles.voteRow}>
+            {/* Outline icon on a plain gray chip when not your vote, solid
+                icon on a solid colored chip when it is - confirmed live as
+                a real problem: the previous subtle tint-on-active state was
+                too easy to miss at a glance. Shrunk from the first pass at
+                this redesign (26px) to keep the message itself the visually
+                dominant element, not the controls - hitSlop makes up the
+                difference so the real touch target doesn't shrink with it. */}
             <Pressable
               onPress={() => onVote("upvote")}
-              hitSlop={8}
+              hitSlop={10}
               style={[styles.voteButton, myVote === "upvote" && styles.voteButtonUpActive]}
             >
-              <Text style={[styles.voteButtonText, myVote === "upvote" && styles.voteButtonTextUpActive]}>▲</Text>
+              <Ionicons
+                name={myVote === "upvote" ? "thumbs-up" : "thumbs-up-outline"}
+                size={11}
+                color={myVote === "upvote" ? "white" : "#2C2C2A"}
+              />
             </Pressable>
             <Text style={styles.voteCount}>{netVotes}</Text>
             <Pressable
               onPress={() => onVote("downvote")}
-              hitSlop={8}
+              hitSlop={10}
               style={[styles.voteButton, myVote === "downvote" && styles.voteButtonDownActive]}
             >
-              <Text style={[styles.voteButtonText, myVote === "downvote" && styles.voteButtonTextDownActive]}>▼</Text>
+              <Ionicons
+                name={myVote === "downvote" ? "thumbs-down" : "thumbs-down-outline"}
+                size={11}
+                color={myVote === "downvote" ? "white" : "#2C2C2A"}
+              />
             </Pressable>
           </View>
           {/* Always visible - a reply is a normal, frequent interaction
               with no real downside to a stray tap, unlike Report (which
               only lives in the long-press menu below, since it already
               goes through its own confirm dialog in ConversationScreen and
-              doesn't need to compete for space here). Icon-only circular
-              chip, matching the vote buttons' pill styling rather than a
-              plain text link. */}
-          <Pressable onPress={onReply} hitSlop={8} style={styles.replyButton}>
-            <Text style={styles.replyButtonText}>↪</Text>
+              doesn't need to compete for space here). Placeholder icon
+              (arrow-redo) until a custom reply asset replaces it - no
+              longer the bare "↪" glyph. */}
+          <Pressable onPress={onReply} hitSlop={10} style={styles.replyButton}>
+            <Ionicons name="arrow-redo-outline" size={11} color="#2C2C2A" />
           </Pressable>
         </View>
       </Pressable>
+      {isOwn && herebie}
 
       <Modal visible={contextMenuVisible} transparent animationType="fade" onRequestClose={() => setContextMenuVisible(false)}>
         <Pressable style={styles.contextMenuBackdrop} onPress={() => setContextMenuVisible(false)} />
@@ -171,10 +208,19 @@ export const MessageBubble = React.memo(MessageBubbleImpl, (prev, next) => {
 });
 
 const styles = StyleSheet.create({
-  row: { flexDirection: "row", marginVertical: 4, paddingHorizontal: 12 },
+  // alignItems: flex-start (not center) so the Herebie sits at the TOP of
+  // the bubble rather than vertically centering against a long/multiline
+  // message - confirmed against a deliberately long test message.
+  row: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginVertical: 4, paddingHorizontal: 12 },
   rowOwn: { justifyContent: "flex-end" },
-  bubble: { backgroundColor: "#F1EFE8", borderRadius: 14, padding: 10, maxWidth: "82%" },
+  // maxWidth trimmed from 82% to make room for the 44pt Herebie + gap now
+  // living outside the bubble (previously the only thing in the row).
+  bubble: { backgroundColor: "#F1EFE8", borderRadius: 14, padding: 10, maxWidth: "74%" },
   bubbleOwn: { backgroundColor: "#2C2C2A" },
+  // No background/border of its own - just a tap target around the
+  // Herebie itself, sized to the 44pt spec with a little slop for the tap
+  // area without inflating the visible artwork.
+  herebieButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   reportedText: { fontSize: 13, fontStyle: "italic", color: "#888780" },
   reportedTextOwn: { color: "#B4B2A9" },
   authorRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
@@ -201,33 +247,37 @@ const styles = StyleSheet.create({
   // regardless of isOwn (reads fine as a subtle inset chip on both the
   // light and the dark "own message" bubble, so no separate isOwn variant
   // needed for the chrome itself, only for the active vote states below).
-  voteRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  // Shrunk from the first pass at this redesign (26px) per "the message
+  // should visually dominate the controls" - hitSlop (see the Pressables
+  // above) keeps the real touch target close to its previous size even as
+  // the visible chip shrinks.
+  voteRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   voteButton: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 21,
+    height: 21,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#EDEBE3",
   },
-  voteButtonText: { fontSize: 12, color: "#2C2C2A" },
-  voteButtonUpActive: { backgroundColor: "#DCEFDC" },
-  voteButtonTextUpActive: { color: "#2C6B2F" },
-  voteButtonDownActive: { backgroundColor: "#F5DCDC" },
-  voteButtonTextDownActive: { color: "#A32D2D" },
+  // Solid fill (not a light tint) once it's your vote - the icon itself
+  // switches to the solid Ionicons variant in white to match, per the
+  // reference: outline-on-gray when unselected, solid-on-color when
+  // selected.
+  voteButtonUpActive: { backgroundColor: "#2C6B2F" },
+  voteButtonDownActive: { backgroundColor: "#A32D2D" },
   // Bold teal regardless of isOwn/vote state, same reasoning as the chip
   // background above - bright enough to read clearly on both the light and
   // dark bubble.
-  voteCount: { fontSize: 13, fontWeight: "700", color: "#14B8A6", minWidth: 20, textAlign: "center" },
+  voteCount: { fontSize: 12, fontWeight: "700", color: "#14B8A6", minWidth: 18, textAlign: "center" },
   replyButton: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 21,
+    height: 21,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#EDEBE3",
   },
-  replyButtonText: { fontSize: 13, color: "#2C2C2A" },
   time: { fontSize: 10, color: "#888780", marginLeft: 8 },
   timeOwn: { color: "#B4B2A9" },
   contextMenuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },

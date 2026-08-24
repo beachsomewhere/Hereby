@@ -16,7 +16,7 @@ import { supabase } from "./supabaseClient";
 import { distanceMeters } from "./geo";
 import { computeRenderSize } from "./activityScore";
 import { generatePseudonym } from "./pseudonym";
-import { AVATAR_ICONS } from "./avatarIcons";
+import { HEREBIES } from "./herebies";
 import {
   ConfirmationType,
   Confirmation,
@@ -179,21 +179,24 @@ export async function getUser(userId: string): Promise<User | undefined> {
   return data ? mapUser(data as UsersRow) : undefined;
 }
 
-export async function updateAvatarIcon(_userId: string, icon: string): Promise<User | undefined> {
+export async function updateAvatarIcon(_userId: string, herebieId: string): Promise<User | undefined> {
   // update_avatar_icon() (schema.sql) acts on auth.uid()'s own row, not an
   // arbitrary target - _userId is kept in the signature only for parity
   // with mockBackend.ts; every call site already passes the caller's own id.
+  // p_icon/avatar_icon predate Herebies (this used to store a raw emoji
+  // string) - kept as-is rather than renamed throughout the DB/RPC, since
+  // only the meaning of the stored text changed, not its shape.
   //
-  // requiredLevel is looked up client-side from the same catalog the icon
-  // picker itself renders from, rather than re-encoding an icon->level
-  // mapping in SQL as a second, drift-prone copy - see schema.sql's
-  // update_avatar_icon for why (a hardcoded emoji-string CASE match there
-  // previously broke every selection silently). An icon not in the catalog
-  // at all (shouldn't happen - the picker only ever sends real ones) is
-  // treated as requiring an unreachable level, so the RPC's own check still
-  // blocks it rather than defaulting to "always allowed."
-  const requiredLevel = AVATAR_ICONS.find((i) => i.icon === icon)?.requiredLevel ?? 999;
-  const { data, error } = await supabase.rpc("update_avatar_icon", { p_icon: icon, p_required_level: requiredLevel });
+  // requiredLevel is looked up client-side from the same catalog the
+  // Herebie picker itself renders from, rather than re-encoding an
+  // id->level mapping in SQL as a second, drift-prone copy - see
+  // schema.sql's update_avatar_icon for why (a hardcoded emoji-string CASE
+  // match there previously broke every selection silently). An id not in
+  // the catalog at all (shouldn't happen - the picker only ever sends real
+  // ones) is treated as requiring an unreachable level, so the RPC's own
+  // check still blocks it rather than defaulting to "always allowed."
+  const requiredLevel = HEREBIES.find((h) => h.id === herebieId)?.levelRequired ?? 999;
+  const { data, error } = await supabase.rpc("update_avatar_icon", { p_icon: herebieId, p_required_level: requiredLevel });
   if (error) raise(error);
   return data ? mapUser(data as UsersRow) : undefined;
 }

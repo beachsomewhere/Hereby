@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { User } from "../services/types";
 import { Avatar } from "./Avatar";
-import { AVATAR_ICONS } from "../services/avatarIcons";
+import { HEREBIES } from "../services/herebies";
 import { ReportReasonPicker, resolveReportReason } from "./ReportReasonPicker";
 
 interface Props {
@@ -52,7 +52,7 @@ export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport,
       <View style={styles.cardWrap} pointerEvents="box-none">
         <View style={styles.card}>
           <View style={styles.avatarWrap}>
-            <Avatar username={user.username} avatarIcon={user.avatarIcon} size={56} />
+            <Avatar username={user.username} herebieId={user.avatarIcon} size={56} />
           </View>
           <Text style={styles.username}>{user.username}</Text>
           <Text style={styles.meta}>Level {user.level} · {ageLabel}</Text>
@@ -76,21 +76,24 @@ export function ProfileCard({ user, visible, isSelf, onClose, onBlock, onReport,
 
           {isSelf && (
             <View style={styles.iconPickerSection}>
-              <Text style={styles.iconPickerTitle}>Your icon</Text>
+              <Text style={styles.iconPickerTitle}>Your Herebie</Text>
               <View style={styles.iconGrid}>
-                {AVATAR_ICONS.map((option) => {
-                  const unlocked = option.requiredLevel <= user.level;
-                  const selected = user.avatarIcon === option.icon;
+                {HEREBIES.map((option) => {
+                  const unlocked = option.levelRequired <= user.level;
+                  const selected = user.avatarIcon === option.id;
                   return (
                     <View key={option.id} style={styles.iconChipWrap}>
                       <Pressable
                         style={[styles.iconChip, selected && styles.iconChipSelected, !unlocked && styles.iconChipLocked]}
-                        onPress={() => unlocked && onSelectIcon?.(option.icon)}
+                        onPress={() => unlocked && onSelectIcon?.(option.id)}
                         disabled={!unlocked}
+                        accessibilityLabel={option.name}
                       >
-                        <Text style={[styles.iconChipEmoji, !unlocked && styles.iconChipEmojiLocked]}>{option.icon}</Text>
+                        <View style={!unlocked && styles.iconChipLockedContent}>
+                          <Avatar username={user.username} herebieId={option.id} size={38} />
+                        </View>
                       </Pressable>
-                      <Text style={styles.iconChipLevel}>{unlocked ? "" : `Lv ${option.requiredLevel}`}</Text>
+                      <Text style={styles.iconChipLevel}>{unlocked ? "" : `Lv ${option.levelRequired}`}</Text>
                     </View>
                   );
                 })}
@@ -175,8 +178,7 @@ const styles = StyleSheet.create({
   },
   iconChipSelected: { borderColor: "#2C2C2A" },
   iconChipLocked: { backgroundColor: "#F7F6F2" },
-  iconChipEmoji: { fontSize: 20 },
-  iconChipEmojiLocked: { opacity: 0.3 },
+  iconChipLockedContent: { opacity: 0.3 },
   iconChipLevel: { fontSize: 9, color: "#888780", marginTop: 2, height: 12 },
   logOutButton: { marginTop: 18 },
   logOutButtonText: { fontSize: 13, color: "#A32D2D" },

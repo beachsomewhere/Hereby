@@ -27,8 +27,8 @@ export interface User {
   id: string;
   username: string;
   avatarSeed: string;
-  // Chosen unlockable icon (see avatarIcons.ts) - undefined until the user
-  // picks one, which falls back to initials-in-a-circle.
+  // Chosen unlockable Herebie id (see herebies.ts) - undefined, or an id
+  // with no real artwork yet, falls back to initials-in-a-circle (Avatar.tsx).
   avatarIcon?: string;
   level: number;
   helpfulPoints: number;
