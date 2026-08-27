@@ -124,11 +124,17 @@ create table if not exists public.conversations (
   last_activity_at timestamptz not null default now(),
   activity_score numeric not null default 0,
   participant_count integer not null default 0,
+  peak_participant_count integer not null default 0,
   messages_last_15min integer not null default 0
 );
 create index if not exists conversations_location_gix on public.conversations using gist (location);
 create index if not exists conversations_status_idx on public.conversations(status);
 create index if not exists conversations_expires_at_idx on public.conversations(expires_at);
+-- Highest participant_count this conversation has ever reached (see
+-- recompute_participant_count() below) - added after conversations' first
+-- release, hence the separate alter for a project that already has the
+-- table (create table if not exists above is a no-op there).
+alter table public.conversations add column if not exists peak_participant_count integer not null default 0;
 
 create table if not exists public.conversation_participants (
   conversation_id uuid not null references public.conversations(id) on delete cascade,
@@ -1014,12 +1020,15 @@ create or replace function public.recompute_participant_count() returns trigger
 language plpgsql as $$
 declare
   v_conversation_id uuid := coalesce(new.conversation_id, old.conversation_id);
+  v_count integer;
 begin
+  select count(*) into v_count
+  from public.conversation_participants
+  where conversation_id = v_conversation_id and state in ('inside', 'grace');
+
   update public.conversations
-  set participant_count = (
-    select count(*) from public.conversation_participants
-    where conversation_id = v_conversation_id and state in ('inside', 'grace')
-  )
+  set participant_count = v_count,
+      peak_participant_count = greatest(peak_participant_count, v_count)
   where id = v_conversation_id;
   return null;
 end;
@@ -1032,11 +1041,18 @@ create trigger trg_recompute_participant_count
 
 -- One-time backfill - the trigger above only catches changes from now on,
 -- this corrects every conversation's already-stale count (idempotent, safe
--- to re-run: always recomputes to the same correct value).
+-- to re-run: always recomputes to the same correct value). peak is backfilled
+-- to at least the current count - real historical peak isn't recoverable, so
+-- this is just the correct floor for existing rows.
 update public.conversations c
 set participant_count = (
   select count(*) from public.conversation_participants cp
   where cp.conversation_id = c.id and cp.state in ('inside', 'grace')
+),
+peak_participant_count = greatest(
+  peak_participant_count,
+  (select count(*) from public.conversation_participants cp
+   where cp.conversation_id = c.id and cp.state in ('inside', 'grace'))
 );
 
 -- ---------------------------------------------------------------------------
@@ -1630,6 +1646,40 @@ begin
     (select count(*) from public.messages where created_at > now() - interval '24 hours' and deleted_at is null),
     (select count(*) from public.users where created_at > now() - interval '7 days' and not is_deleted),
     (select round(avg(participant_count), 1) from public.conversations where status <> 'deleted');
+end;
+$$;
+
+-- Individual live conversations for the admin "Chats" table - lat/lng
+-- extracted server-side (ST_Y/ST_X) same as the map/duplicate-suggestion
+-- RPCs above, since PostgREST would otherwise hand the client opaque WKB hex
+-- for the geography column. "Current chats" = not archived/deleted, same
+-- definition admin_stats() above uses for its own conversation counts.
+create or replace function public.admin_list_conversations()
+returns table (
+  id uuid,
+  title text,
+  status conversation_status,
+  created_at timestamptz,
+  expires_at timestamptz,
+  participant_count integer,
+  peak_participant_count integer,
+  lat double precision,
+  lng double precision
+)
+language plpgsql
+security definer
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'not authorized';
+  end if;
+  return query select
+    c.id, c.title, c.status, c.created_at, c.expires_at,
+    c.participant_count, c.peak_participant_count,
+    ST_Y(c.location::geometry), ST_X(c.location::geometry)
+  from public.conversations c
+  where c.status not in ('archived', 'deleted')
+  order by c.created_at desc;
 end;
 $$;
 

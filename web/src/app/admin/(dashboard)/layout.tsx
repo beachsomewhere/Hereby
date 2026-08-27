@@ -51,6 +51,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <a href="/admin/reports" className="text-sm text-[#5F5E5A] hover:text-[#2C2C2A]">
             Reports
           </a>
+          <a href="/admin/chats" className="text-sm text-[#5F5E5A] hover:text-[#2C2C2A]">
+            Chats
+          </a>
         </div>
         <div className="flex items-center gap-5">
           <a href="/" className="text-sm text-[#5F5E5A] hover:text-[#2C2C2A]">
