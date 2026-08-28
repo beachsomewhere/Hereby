@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { ConfirmationType, Message } from "../services/types";
 import { Avatar } from "./Avatar";
+import { ReplyIcon, ThumbsDownIcon, ThumbsUpIcon } from "./VoteIcons";
 import { maskProfanity } from "../services/profanityFilter";
 
 interface Props {
@@ -119,7 +120,7 @@ function MessageBubbleImpl({
               hitSlop={10}
               style={[styles.voteButton, myVote === "upvote" && styles.voteButtonUpActive]}
             >
-              <Text style={[styles.voteButtonText, myVote === "upvote" && styles.voteButtonTextUpActive]}>▲</Text>
+              <ThumbsUpIcon size={11} filled={myVote === "upvote"} color={myVote === "upvote" ? "white" : "#2C2C2A"} />
             </Pressable>
             <Text style={styles.voteCount}>{netVotes}</Text>
             <Pressable
@@ -127,18 +128,20 @@ function MessageBubbleImpl({
               hitSlop={10}
               style={[styles.voteButton, myVote === "downvote" && styles.voteButtonDownActive]}
             >
-              <Text style={[styles.voteButtonText, myVote === "downvote" && styles.voteButtonTextDownActive]}>▼</Text>
+              <ThumbsDownIcon
+                size={11}
+                filled={myVote === "downvote"}
+                color={myVote === "downvote" ? "white" : "#2C2C2A"}
+              />
             </Pressable>
           </View>
           {/* Always visible - a reply is a normal, frequent interaction
               with no real downside to a stray tap, unlike Report (which
               only lives in the long-press menu below, since it already
               goes through its own confirm dialog in ConversationScreen and
-              doesn't need to compete for space here). Placeholder icon
-              (arrow-redo) until a custom reply asset replaces it - no
-              longer the bare "↪" glyph. */}
+              doesn't need to compete for space here). */}
           <Pressable onPress={onReply} hitSlop={10} style={styles.replyButton}>
-            <Text style={styles.replyButtonText}>↪</Text>
+            <ReplyIcon size={11} color="#2C2C2A" />
           </Pressable>
         </View>
       </Pressable>
@@ -265,11 +268,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#EDEBE3",
   },
-  voteButtonText: { fontSize: 12, color: "#2C2C2A" },
   voteButtonUpActive: { backgroundColor: "#2C6B2F" },
-  voteButtonTextUpActive: { color: "white" },
   voteButtonDownActive: { backgroundColor: "#A32D2D" },
-  voteButtonTextDownActive: { color: "white" },
   // Bold teal regardless of isOwn/vote state, same reasoning as the chip
   // background above - bright enough to read clearly on both the light and
   // dark bubble.
@@ -282,7 +282,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#EDEBE3",
   },
-  replyButtonText: { fontSize: 13, color: "#2C2C2A" },
   time: { fontSize: 10, color: "#888780", marginLeft: 8 },
   timeOwn: { color: "#B4B2A9" },
   contextMenuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },

@@ -125,7 +125,8 @@ create table if not exists public.conversations (
   activity_score numeric not null default 0,
   participant_count integer not null default 0,
   peak_participant_count integer not null default 0,
-  messages_last_15min integer not null default 0
+  messages_last_15min integer not null default 0,
+  ttl_duration interval generated always as (expires_at - created_at) stored
 );
 create index if not exists conversations_location_gix on public.conversations using gist (location);
 create index if not exists conversations_status_idx on public.conversations(status);
@@ -135,6 +136,14 @@ create index if not exists conversations_expires_at_idx on public.conversations(
 -- release, hence the separate alter for a project that already has the
 -- table (create table if not exists above is a no-op there).
 alter table public.conversations add column if not exists peak_participant_count integer not null default 0;
+-- The conversation's own original TTL length, locked in from its actual
+-- created_at/expires_at at insert time (generated columns compute once from
+-- their dependencies, so overwriting expires_at later - see
+-- recompute_participant_count() below - never changes this). This is what
+-- lets a conversation get a full fresh window from the moment it actually
+-- empties out, rather than just using whatever was left of the original
+-- creation-time deadline.
+alter table public.conversations add column if not exists ttl_duration interval generated always as (expires_at - created_at) stored;
 
 create table if not exists public.conversation_participants (
   conversation_id uuid not null references public.conversations(id) on delete cascade,
@@ -1047,14 +1056,30 @@ language plpgsql as $$
 declare
   v_conversation_id uuid := coalesce(new.conversation_id, old.conversation_id);
   v_count integer;
+  v_previous_count integer;
 begin
   select count(*) into v_count
   from public.conversation_participants
   where conversation_id = v_conversation_id and state in ('inside', 'grace');
 
+  select participant_count into v_previous_count
+  from public.conversations where id = v_conversation_id;
+
   update public.conversations
   set participant_count = v_count,
-      peak_participant_count = greatest(peak_participant_count, v_count)
+      peak_participant_count = greatest(peak_participant_count, v_count),
+      -- Only on a genuine transition to empty (not every trigger firing
+      -- while it's already empty, e.g. a read_only participant's periodic
+      -- recheck landing with no actual count change - that would otherwise
+      -- keep pushing the deadline out forever and the chat would never
+      -- age out). Gives a full fresh ttl_duration window starting now,
+      -- rather than whatever was left of the original creation-time
+      -- deadline - the whole point being that a genuinely occupied chat's
+      -- age-out clock doesn't even start running until it's actually empty.
+      expires_at = case
+        when v_count = 0 and v_previous_count > 0 then now() + ttl_duration
+        else expires_at
+      end
   where id = v_conversation_id;
   return null;
 end;
@@ -1080,6 +1105,15 @@ peak_participant_count = greatest(
   (select count(*) from public.conversation_participants cp
    where cp.conversation_id = c.id and cp.state in ('inside', 'grace'))
 );
+
+-- Companion backfill for the new "age-out clock starts at vacancy, not
+-- creation" rule above - without this, a conversation that's already empty
+-- right now would keep its old, possibly-already-past expires_at and archive
+-- on the very next sweep instead of getting the fresh window the new rule
+-- intends. Only touches currently-empty, still-live conversations.
+update public.conversations
+set expires_at = now() + ttl_duration
+where participant_count = 0 and status not in ('archived', 'deleted');
 
 -- ---------------------------------------------------------------------------
 -- Avatar icon selection - re-validates the level requirement server-side so
