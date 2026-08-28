@@ -356,6 +356,17 @@ export async function leaveConversation(_userId: string, conversationId: string)
   if (error) raise(error);
 }
 
+// Ground truth for whether the background location watcher (RootNavigator)
+// has anything to re-verify right now, and which conversations - always
+// re-derived from the server rather than tracked via client-side
+// increment/decrement, since a user can be active in more than one
+// conversation at once.
+export async function getMyActiveConversationIds(): Promise<string[]> {
+  const { data, error } = await supabase.rpc("my_active_conversation_ids");
+  if (error) raise(error);
+  return ((data ?? []) as { conversation_id: string }[]).map((r) => r.conversation_id);
+}
+
 export async function setConversationMuted(conversationId: string, muted: boolean): Promise<void> {
   const { error } = await supabase.rpc("set_conversation_muted", {
     p_conversation_id: conversationId,

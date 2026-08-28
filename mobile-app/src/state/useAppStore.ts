@@ -27,6 +27,14 @@ interface AppState {
   participantStates: Record<string, ParticipantState>;
   setParticipantState: (conversationId: string, state: ParticipantState) => void;
 
+  // Whether the calling user currently has an active (non-'left') row in
+  // any conversation - drives RootNavigator's background location watcher
+  // (allowsBackgroundLocationUpdates only turns on while this is true, see
+  // its own comment) and the periodic background re-check timer. Always
+  // re-derived from backend.getMyActiveConversationIds(), never assumed.
+  hasActiveMembership: boolean;
+  setHasActiveMembership: (v: boolean) => void;
+
   blockedUserIds: Set<string>;
   blockUser: (userId: string) => void;
 
@@ -45,6 +53,7 @@ export const useAppStore = create<AppState>((set) => ({
       userLocation: undefined,
       devSimulatedLocation: undefined,
       participantStates: {},
+      hasActiveMembership: false,
       blockedUserIds: new Set(),
       reportedMessageIds: new Set(),
     }),
@@ -60,6 +69,9 @@ export const useAppStore = create<AppState>((set) => ({
   participantStates: {},
   setParticipantState: (conversationId, state) =>
     set((s) => ({ participantStates: { ...s.participantStates, [conversationId]: state } })),
+
+  hasActiveMembership: false,
+  setHasActiveMembership: (v) => set({ hasActiveMembership: v }),
 
   blockedUserIds: new Set(),
   blockUser: (userId) =>

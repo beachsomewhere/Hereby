@@ -35,6 +35,12 @@
           "icon": "./assets/icon.png",
           "color": "#FF5A3C"
         }
+      ],
+      [
+        "expo-location",
+        {
+          "isIosBackgroundLocationEnabled": true
+        }
       ]
     ],
     "extra": {

@@ -56,6 +56,7 @@ export function ConversationScreen({ route, navigation }: Props) {
   const blockUserInStore = useAppStore((s) => s.blockUser);
   const reportedMessageIds = useAppStore((s) => s.reportedMessageIds);
   const reportMessageInStore = useAppStore((s) => s.reportMessage);
+  const setHasActiveMembership = useAppStore((s) => s.setHasActiveMembership);
 
   const [conversation, setConversation] = useState<ConversationSummary>();
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -179,6 +180,12 @@ export function ConversationScreen({ route, navigation }: Props) {
           console.log(`[timing] checkEligibility: ${Date.now() - t1}ms`);
           setParticipantState(eligibility.state);
           setMuted(eligibility.muted);
+          // Cheap direct set, not a round-trip to getMyActiveConversationIds -
+          // a successful check against a conversation that's still loadable
+          // here is never actually 'left' (that state only comes back for a
+          // conversation that no longer exists at all, which bails out
+          // earlier above). Drives RootNavigator's background watcher.
+          if (eligibility.state !== "left") setHasActiveMembership(true);
         } catch (err) {
           // This runs on every poll tick (every 6s) and on realtime signals,
           // not just once on mount - an Alert here would fire repeatedly on a
@@ -373,6 +380,15 @@ export function ConversationScreen({ route, navigation }: Props) {
           hasLeftRef.current = true;
           try {
             await backend.leaveConversation(currentUser.id, conversationId);
+            // Unlike the refresh() path above, this can't just be set to
+            // false directly - the user may still be active in a different
+            // conversation, so it needs the real round-trip to know for
+            // sure. Best-effort: a failure here just leaves the background
+            // watcher's next periodic tick to self-correct instead.
+            backend
+              .getMyActiveConversationIds()
+              .then((ids) => setHasActiveMembership(ids.length > 0))
+              .catch((err) => console.error("getMyActiveConversationIds after leave failed:", err));
             setMenuVisible(false);
             navigation.goBack();
           } catch (err) {

@@ -948,6 +948,32 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- The calling user's own currently-active conversation ids (state <> 'left',
+-- conversation not archived/deleted) - single source of truth for the
+-- client's background presence re-check (RootNavigator's location watcher):
+-- both "do I have anything to re-verify at all" and "which conversations"
+-- come from here, re-derived fresh each time rather than tracked via
+-- client-side bookkeeping that could drift from what the server actually
+-- has. Same auth.uid()-scoped SECURITY DEFINER pattern as leave_conversation
+-- above.
+-- ---------------------------------------------------------------------------
+create or replace function public.my_active_conversation_ids()
+returns table (conversation_id uuid)
+language plpgsql
+security definer
+as $$
+begin
+  return query
+  select cp.conversation_id
+  from public.conversation_participants cp
+  join public.conversations c on c.id = cp.conversation_id
+  where cp.user_id = (select id from public.users where auth_id = auth.uid())
+    and cp.state <> 'left'
+    and c.status not in ('archived', 'deleted');
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Per-user mute, so a high-volume conversation (e.g. a 1,400-person concert
 -- chat) doesn't notification-spam someone who joined it. Same
 -- SECURITY DEFINER / auth.uid()-scoped pattern as leave_conversation above -
