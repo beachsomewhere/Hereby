@@ -216,7 +216,7 @@ function recomputeAll() {
     const score = computeActivityScore(conv, n);
     const idleMin = minutesBetween(conv.lastActivityAt, n);
     const pastExpiry = new Date(conv.expiresAt).getTime() <= now().getTime();
-    conv.status = nextStatus(conv.status, score, idleMin, pastExpiry);
+    conv.status = nextStatus(conv.status, score, idleMin, pastExpiry, conv.participantCount);
   }
 }
 

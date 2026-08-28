@@ -42,7 +42,12 @@ serve(async () => {
         recencyBoost
     );
 
-    const pastExpiry = new Date(conv.expires_at).getTime() <= now;
+    // Withheld while anyone's still an active participant (see
+    // activityScore.ts#nextStatus, which this mirrors) - a chat doesn't get
+    // swept out from under someone actually still in it just because its
+    // clock ran out. Archives on the first sweep after participant_count
+    // genuinely drops to 0.
+    const pastExpiry = new Date(conv.expires_at).getTime() <= now && conv.participant_count === 0;
     let status = conv.status;
     if (pastExpiry) {
       status = "archived";

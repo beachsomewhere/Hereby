@@ -83,14 +83,25 @@ export function heatLevel(score: number): "new" | "active" | "hot" {
  * Lifecycle transition, mirrors the pg_cron sweep described in the
  * architecture doc: new -> active -> cooling_down -> archived, plus a hard
  * TTL cut. This function is pure so it's trivially unit-testable.
+ *
+ * The TTL cut is withheld while anyone is still an active participant
+ * (participantCount > 0, i.e. state 'inside' or 'grace') - a chat with
+ * someone actually still in it doesn't get swept out from under them just
+ * because its clock ran out. It archives on the first sweep after the last
+ * participant's state genuinely drops to 0. This relies on that count being
+ * accurate: a participant whose app never re-checks eligibility (screen
+ * closed, app backgrounded) keeps whatever state it last had indefinitely
+ * (see checkEligibility's Edge Function) - so a stale "inside" row would
+ * also indefinitely block this expiry, not just undercount who's present.
  */
 export function nextStatus(
   current: ConversationStatus,
   score: number,
   minutesSinceLastMessage: number,
-  isPastExpiry: boolean
+  isPastExpiry: boolean,
+  participantCount: number
 ): ConversationStatus {
-  if (isPastExpiry) return "archived";
+  if (isPastExpiry && participantCount === 0) return "archived";
   if (current === "deleted" || current === "archived") return current;
   if (score < 1.5 && minutesSinceLastMessage > 45) return "cooling_down";
   if (score >= 4) return "active";
