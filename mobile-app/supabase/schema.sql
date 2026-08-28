@@ -1807,6 +1807,15 @@ create index if not exists conversation_participants_active_last_check_idx
   on public.conversation_participants(last_check_at)
   where state in ('inside', 'grace');
 
+-- 20 minutes, not 10 - this has no way to check whether someone's still in
+-- bounds (raw GPS is never stored anywhere, by this app's own design), only
+-- how long it's been since anything heard from them. The background
+-- presence task (RootNavigator.tsx) requests a 4-minute check-in interval,
+-- but iOS treats that as a request, not a guarantee - a threshold too close
+-- to that interval means a single delayed cycle wrongly demotes someone who
+-- never actually left. 20 minutes gives real headroom (5x the requested
+-- interval) while still cleaning up genuinely-abandoned devices (crashed,
+-- force-quit, uninstalled) in a reasonable time.
 create or replace function public.sweep_stale_participants() returns void
 language sql
 as $$
@@ -1814,7 +1823,7 @@ as $$
   set state = 'read_only',
       grace_started_at = null
   where state in ('inside', 'grace')
-    and last_check_at < now() - interval '10 minutes';
+    and last_check_at < now() - interval '20 minutes';
 $$;
 
 -- Runs as the role that scheduled it (superuser in Supabase's pg_cron
