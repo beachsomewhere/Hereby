@@ -44,7 +44,19 @@ TaskManager.defineTask(BACKGROUND_PRESENCE_TASK, async ({ data, error }) => {
     useAppStore.getState().setUserLocation({ lat: latest.coords.latitude, lng: latest.coords.longitude });
   }
 
-  const currentUser = useAppStore.getState().currentUser;
+  // Not useAppStore.getState().currentUser - after 15+ minutes backgrounded,
+  // iOS is quite likely to have suspended and then cold-relaunched the app
+  // specifically to deliver this task invocation, meaning the JS context
+  // (and this in-memory-only Zustand store) starts completely fresh, with
+  // currentUser back to its undefined default. restoreSession() reads
+  // Supabase's actual persisted session instead, so identity resolves
+  // correctly either way - confirmed live: this exact gap is why a real
+  // TestFlight device's participant state never got re-verified in the
+  // background despite the task itself starting correctly (background
+  // location indicator visibly appeared, so the task was running - it was
+  // just silently no-oping on every invocation once the app had been
+  // suspended and relaunched under it).
+  const currentUser = await authService.restoreSession();
   if (!currentUser) return;
 
   try {
@@ -150,21 +162,30 @@ export function RootNavigator() {
     const shouldRun = !!currentUser && !devModeEnabled && hasActiveMembership;
     let cancelled = false;
     (async () => {
-      const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_PRESENCE_TASK).catch(
-        () => false
-      );
-      if (shouldRun) {
-        if (alreadyStarted) return;
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== "granted" || cancelled) return;
-        await Location.startLocationUpdatesAsync(BACKGROUND_PRESENCE_TASK, {
-          accuracy: Location.Accuracy.Balanced,
-          timeInterval: 4 * 60 * 1000,
-          distanceInterval: 15,
-          showsBackgroundLocationIndicator: true,
-        });
-      } else if (alreadyStarted && !cancelled) {
-        await Location.stopLocationUpdatesAsync(BACKGROUND_PRESENCE_TASK);
+      try {
+        const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_PRESENCE_TASK).catch(
+          () => false
+        );
+        if (shouldRun) {
+          if (alreadyStarted) return;
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status !== "granted" || cancelled) return;
+          await Location.startLocationUpdatesAsync(BACKGROUND_PRESENCE_TASK, {
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: 4 * 60 * 1000,
+            distanceInterval: 15,
+            showsBackgroundLocationIndicator: true,
+          });
+        } else if (alreadyStarted && !cancelled) {
+          await Location.stopLocationUpdatesAsync(BACKGROUND_PRESENCE_TASK);
+        }
+      } catch (err) {
+        // Otherwise a start/stop failure (e.g. a background mode
+        // misconfiguration) is an unhandled rejection with no visible
+        // symptom other than "the task silently never ran" - exactly the
+        // kind of failure that took real device debugging to catch once
+        // already tonight.
+        console.error("background presence task start/stop failed:", err instanceof Error ? err.message : err);
       }
     })();
     return () => {
