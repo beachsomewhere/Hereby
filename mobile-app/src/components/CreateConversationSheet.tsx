@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -166,7 +167,13 @@ export function CreateConversationSheet({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={reset}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <Pressable style={styles.backdrop} onPress={reset} />
-      <View style={styles.sheet}>
+      {/* onPress here just dismisses the keyboard, not the sheet - the
+          TextInput/Slider/buttons below all capture their own touches first
+          (RN's normal responder behavior), so this only fires for taps on
+          the sheet's non-interactive space (title, labels, gaps). Without
+          it, focusing the title field left the keyboard up with no way to
+          put it away short of closing the whole sheet via the backdrop. */}
+      <Pressable style={styles.sheet} onPress={() => Keyboard.dismiss()}>
         <View style={styles.handle} />
         <Text style={styles.title}>Start a chat</Text>
         <Text style={styles.subtitle}>Short topic - what's happening right here, right now?</Text>
@@ -177,6 +184,8 @@ export function CreateConversationSheet({
           value={title}
           onChangeText={setTitle}
           maxLength={80}
+          returnKeyType="done"
+          onSubmitEditing={() => Keyboard.dismiss()}
         />
 
         <View style={styles.radiusHeaderRow}>
@@ -244,7 +253,7 @@ export function CreateConversationSheet({
             {loading ? <ActivityIndicator color="white" /> : <Text style={styles.createButtonText}>Start chat</Text>}
           </Pressable>
         )}
-      </View>
+      </Pressable>
       </KeyboardAvoidingView>
     </Modal>
   );
