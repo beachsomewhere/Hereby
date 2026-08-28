@@ -6,6 +6,7 @@ export function TopNav() {
           Hereby
         </a>
         <div className="topnav-links">
+          <a href="/use-cases">Use cases</a>
           <a href="/faq">FAQ</a>
           <a href="/safety">Safety</a>
           <a href="/privacy">Privacy</a>

@@ -58,7 +58,9 @@ export default function HomePage() {
       <section className="alt">
         <div className="wrap">
           <h2>Real situations, real chats</h2>
-          <p className="lead">A few examples of exactly when this is useful.</p>
+          <p className="lead">
+            A few examples of exactly when this is useful — <a href="/use-cases">more use cases →</a>
+          </p>
           <div className="scenarios">
             <div className="scenario">
               <span className="emoji">🚗</span>
