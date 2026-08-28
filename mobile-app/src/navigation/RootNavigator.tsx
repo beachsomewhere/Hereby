@@ -6,6 +6,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useAppStore } from "../state/useAppStore";
 import * as authService from "../services/authService";
 import * as backend from "../services/supabaseBackend";
+import { registerForPushNotifications } from "../services/pushNotifications";
 import { OnboardingScreen } from "../screens/OnboardingScreen";
 import { MapScreen } from "../screens/MapScreen";
 import { ConversationScreen } from "../screens/ConversationScreen";
@@ -90,6 +91,16 @@ export function RootNavigator() {
         } catch (err) {
           console.error("getMyActiveConversationIds on launch failed:", err instanceof Error ? err.message : err);
         }
+        // Previously onboarding-only (OnboardingScreen.tsx) - a returning
+        // user who declined the permission prompt, or whose registration
+        // failed/never ran, had no way back to a working state even after
+        // later granting permission via iOS Settings, since nothing ever
+        // retried. Safe to call every launch: it's a no-op if permission is
+        // already denied or on a simulator, and only re-prompts if the OS
+        // hasn't recorded a decision yet.
+        registerForPushNotifications().catch((err) =>
+          console.error("registerForPushNotifications on launch failed:", err instanceof Error ? err.message : err)
+        );
       }
       setSessionChecked(true);
     });
